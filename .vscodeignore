@@ -1,6 +1,7 @@
 .vscode/**
 .devcontainer/**
 .git/**
+scripts/**
 src/**
 out/**
 node_modules/**
