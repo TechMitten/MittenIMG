@@ -25,6 +25,12 @@ module.exports = {
             loader: 'ts-loader'
           }
         ]
+      },
+      {
+        test: /\.js$/,
+        include: /node_modules/,
+        enforce: 'pre',
+        loader: path.resolve(__dirname, 'webpack.strip-sourcemap-loader.js')
       }
     ]
   },
