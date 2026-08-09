@@ -1,0 +1,79 @@
+{
+  "name": "image-generator-ext",
+  "displayName": "AI Image Generation Assistant",
+  "description": "Generates images based on codebase context using OpenRouter",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Image Generator",
+      "properties": {
+        "image-generator.pollinationsApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Pollinations API Key for LLM Prompt Enhancement and Image Generation"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "image-generator-sidebar",
+          "title": "Image Generator",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "image-generator-sidebar": [
+        {
+          "type": "webview",
+          "id": "image-generator-sidebar.view",
+          "name": "Generate Images"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "image-generator-ext.start",
+        "title": "Start Image Generation Assistant"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "webpack",
+    "watch": "webpack --watch",
+    "package": "webpack --mode production --devtool hidden-source-map",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "npm run compile-tests && npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/glob": "^8.0.0",
+    "@types/mocha": "^10.0.1",
+    "@types/node": "16.x",
+    "@types/vscode": "^1.125.0",
+    "@typescript-eslint/eslint-plugin": "^5.45.0",
+    "@typescript-eslint/parser": "^5.45.0",
+    "eslint": "^8.28.0",
+    "glob": "^8.0.3",
+    "mocha": "^10.1.0",
+    "ts-loader": "^9.4.2",
+    "typescript": "^4.9.3",
+    "webpack": "^5.75.0",
+    "webpack-cli": "^5.0.1"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  }
+}

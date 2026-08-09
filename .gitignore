@@ -1,0 +1,17 @@
+# Environment / Secrets
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+
+# Node dependencies
+node_modules/
+dist/
+out/
+
+# Cloudflare Wrangler
+.wrangler/
+
+# Misc
+*.log
+.DS_Store
