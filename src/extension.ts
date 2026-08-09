@@ -78,6 +78,20 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     this._view.webview.html = this._getMainHtml(useCodebaseContext);
   }
 
+  private _buildContextExcludePattern(): string {
+    const defaultExcludes = ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/out/**'];
+    const config = vscode.workspace.getConfiguration('imagemitten');
+    const userFolders = config.get<string[]>('contextIgnoreFolders', []);
+
+    const userExcludes = userFolders
+      .map(entry => entry.trim())
+      .filter(entry => entry.length > 0)
+      .map(entry => (entry.includes('*') || entry.includes('/') ? entry : `**/${entry}/**`));
+
+    const allExcludes = Array.from(new Set([...defaultExcludes, ...userExcludes]));
+    return `{${allExcludes.join(',')}}`;
+  }
+
   private async handleGenerate(userPrompt: string, width?: string, height?: string, baseImageUrl?: string) {
     if (!this._view) return;
 
@@ -107,7 +121,8 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         this._view.webview.postMessage({ command: 'status', text: 'Reading workspace files...' });
         outputChannel.appendLine('[Context] Reading workspace files...');
         
-        const uris = await vscode.workspace.findFiles('**/*.*', '{**/node_modules/**,**/.git/**,**/dist/**,**/out/**}');
+        const excludePattern = this._buildContextExcludePattern();
+        const uris = await vscode.workspace.findFiles('**/*.*', excludePattern);
         let allCode = '';
         
         for (const uri of uris) {

@@ -29,6 +29,14 @@
           "type": "string",
           "default": "",
           "description": "Pollinations API Key for LLM Prompt Enhancement and Image Generation"
+        },
+        "imagemitten.contextIgnoreFolders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional folder names or glob patterns to exclude from codebase context scanning (e.g. \"test\", \"build\", \"**/fixtures/**\"). node_modules, .git, dist, and out are always excluded."
         }
       }
     },
