@@ -51,11 +51,13 @@ Configure MittenIMG under **Settings → Extensions → MittenIMG**, or by editi
 |---|---|---|---|
 | `imagemitten.useCodebaseContext` | `boolean` | `true` | When enabled, scans your workspace files and uses an LLM to enrich your prompt with project context before generating an image. When disabled, your prompt is sent as-is. |
 | `imagemitten.pollinationsApiKey` | `string` | `""` | Your Pollinations API key, used for LLM prompt enhancement, image editing, and authenticated image generation. |
+| `imagemitten.contextIgnoreFolders` | `string[]` | `[]` | Additional folder names or glob patterns to exclude from codebase context scanning (e.g. `"test"`, `"build"`, `"**/fixtures/**"`). `node_modules`, `.git`, `dist`, and `out` are always excluded. |
 
 ```json
 {
   "imagemitten.useCodebaseContext": true,
-  "imagemitten.pollinationsApiKey": "YOUR_API_KEY"
+  "imagemitten.pollinationsApiKey": "YOUR_API_KEY",
+  "imagemitten.contextIgnoreFolders": ["test", "build"]
 }
 ```
 
@@ -75,7 +77,7 @@ flowchart LR
     F --> H[Preview in sidebar]
 ```
 
-1. **Context gathering** — if enabled, MittenIMG walks your workspace (excluding `node_modules`, `.git`, `dist`, `out`) and builds a text blob of file contents, capped at a reasonable size.
+1. **Context gathering** — if enabled, MittenIMG walks your workspace (excluding `node_modules`, `.git`, `dist`, `out`, plus any folders/patterns you add via `imagemitten.contextIgnoreFolders`) and builds a text blob of file contents, capped at a reasonable size.
 2. **Prompt enhancement** — that context, along with your prompt, is sent to a text model via the Pollinations API, which returns a richer, more specific image-generation prompt.
 3. **Image generation** — the enhanced prompt is sent to Pollinations' image endpoint, with support for custom dimensions and, when editing, a base image.
 4. **Delivery** — the resulting image is streamed back into the sidebar and saved into an `imagemitten/` folder in your workspace.
