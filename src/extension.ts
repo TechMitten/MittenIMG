@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import axios from 'axios';
+import axios, { AxiosRequestConfig } from 'axios';
 import { Buffer } from 'buffer';
 
 const outputChannel = vscode.window.createOutputChannel('ImageMitten');
@@ -12,7 +12,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewViewProvider('imagemitten-sidebar.view', provider)
   );
 
-  let disposable = vscode.commands.registerCommand('imagemitten.start', () => {
+  const disposable = vscode.commands.registerCommand('imagemitten.start', () => {
     vscode.commands.executeCommand('imagemitten-sidebar.view.focus');
   });
 
@@ -26,7 +26,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
-    context: vscode.WebviewViewResolveContext,
+    _context: vscode.WebviewViewResolveContext,
     _token: vscode.CancellationToken,
   ) {
     this._view = webviewView;
@@ -51,6 +51,9 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
           break;
         case 'toggleContext':
           vscode.workspace.getConfiguration('imagemitten').update('useCodebaseContext', message.value, vscode.ConfigurationTarget.Global);
+          break;
+        case 'saveConvertedImage':
+          await this.handleSaveConvertedImage(message.dataUrl, message.format);
           break;
       }
     });
@@ -81,7 +84,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     outputChannel.appendLine('========================================');
     outputChannel.appendLine(`[Generation Started] Prompt: "${userPrompt}"`);
 
-    let configVars: Record<string, string> = {
+    const configVars: Record<string, string> = {
       POLLINATIONS_TEXT_MODEL: 'openai',
       POLLINATIONS_TEXT_ENDPOINT: 'https://gen.pollinations.ai/v1/chat/completions',
       POLLINATIONS_IMAGE_ENDPOINT: 'https://gen.pollinations.ai/image/',
@@ -117,7 +120,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
               allCode += `\n... (truncated for context limits) ...\n`;
               break;
             }
-          } catch (e) {
+          } catch {
             // ignore files that can't be opened
           }
         }
@@ -158,15 +161,18 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 
           enhancedPrompt = response.data?.choices?.[0]?.message?.content?.trim() || userPrompt;
           outputChannel.appendLine(`[Text LLM Success] Enhanced prompt: "${enhancedPrompt}"`);
-        } catch (llmError: any) {
-          const status = llmError.response?.status;
-          const errDetails = JSON.stringify(llmError.response?.data || llmError.message);
+        } catch (llmError: unknown) {
+          const status = axios.isAxiosError(llmError) ? llmError.response?.status : undefined;
+          const message = llmError instanceof Error ? llmError.message : String(llmError);
+          const errDetails = axios.isAxiosError(llmError)
+            ? JSON.stringify(llmError.response?.data || message)
+            : message;
           outputChannel.appendLine(`[Text LLM Warning] Status ${status}: ${errDetails}`);
-          
+
           if (status === 401) {
             vscode.window.showWarningMessage('Text model returned 401 Unauthorized (Pollinations API key required for LLM prompt analysis). Using original prompt directly for image generation.');
           } else {
-            vscode.window.showWarningMessage(`Prompt enhancement failed (${llmError.message}). Using original prompt directly.`);
+            vscode.window.showWarningMessage(`Prompt enhancement failed (${message}). Using original prompt directly.`);
           }
           enhancedPrompt = userPrompt;
         }
@@ -208,8 +214,9 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
             uploadedImageUrl = uploadRes.data; // fallback
           }
           outputChannel.appendLine(`[Image Edit] Uploaded base image successfully: ${uploadedImageUrl}`);
-        } catch (uploadErr: any) {
-          throw new Error(`Failed to upload base image: ${uploadErr.message}`);
+        } catch (uploadErr: unknown) {
+          const message = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
+          throw new Error(`Failed to upload base image: ${message}`, { cause: uploadErr });
         }
       }
 
@@ -234,7 +241,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
       outputChannel.appendLine(`[Image Gen] Image URL: ${imageUrl}`);
 
       // Fetch the image
-      const axiosConfig: any = { responseType: 'arraybuffer' };
+      const axiosConfig: AxiosRequestConfig = { responseType: 'arraybuffer' };
       if (apiKey) {
         axiosConfig.headers = { Authorization: `Bearer ${apiKey}` };
       }
@@ -258,10 +265,66 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
       this._view.webview.postMessage({ command: 'result', imageUrl: base64Image, sourceUrl: imageUrl, enhancedPrompt });
       outputChannel.appendLine(`[Generation Completed] Successfully sent image to webview${savedPath ? ' and saved to workspace' : ''}.`);
 
-    } catch (error: any) {
-      outputChannel.appendLine(`[Fatal Error] ${error.message}`);
-      vscode.window.showErrorMessage(`Failed to generate: ${error.message}`);
-      this._view.webview.postMessage({ command: 'status', text: `Failed to generate: ${error.message}` });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      outputChannel.appendLine(`[Fatal Error] ${message}`);
+      vscode.window.showErrorMessage(`Failed to generate: ${message}`);
+      this._view.webview.postMessage({ command: 'status', text: `Failed to generate: ${message}` });
+    }
+  }
+
+  private async handleSaveConvertedImage(dataUrl: string, format: string) {
+    if (!this._view) return;
+
+    if (!dataUrl) {
+      outputChannel.appendLine('[Convert] No image data received; ignoring saveConvertedImage request.');
+      return;
+    }
+
+    const formatMap: Record<string, { ext: string; label: string }> = {
+      png: { ext: 'png', label: 'PNG' },
+      jpeg: { ext: 'jpg', label: 'JPEG' },
+      webp: { ext: 'webp', label: 'WebP' }
+    };
+    const formatInfo = formatMap[format] || formatMap['png'];
+
+    try {
+      const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, '');
+      const buffer = Buffer.from(base64Data, 'base64');
+
+      const fileName = `image_${Date.now()}.${formatInfo.ext}`;
+      let defaultUri: vscode.Uri;
+
+      if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
+        const workspaceUri = vscode.workspace.workspaceFolders[0].uri;
+        const imageGenFolderUri = vscode.Uri.joinPath(workspaceUri, 'imagemitten');
+        await vscode.workspace.fs.createDirectory(imageGenFolderUri);
+        defaultUri = vscode.Uri.joinPath(imageGenFolderUri, fileName);
+      } else {
+        defaultUri = vscode.Uri.file(fileName);
+      }
+
+      const saveUri = await vscode.window.showSaveDialog({
+        defaultUri,
+        filters: { [formatInfo.label]: [formatInfo.ext] }
+      });
+
+      if (!saveUri) {
+        outputChannel.appendLine('[Convert] Save dialog cancelled by user.');
+        return;
+      }
+
+      await vscode.workspace.fs.writeFile(saveUri, new Uint8Array(buffer));
+      outputChannel.appendLine(`[Convert] Saved converted ${formatInfo.label} image to ${saveUri.fsPath}`);
+
+      vscode.window.showInformationMessage(`Saved ${formatInfo.label} image to ${saveUri.fsPath}`);
+      this._view.webview.postMessage({ command: 'status', text: `Saved ${formatInfo.label} image to ${saveUri.fsPath}` });
+
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      outputChannel.appendLine(`[Convert Error] ${message}`);
+      vscode.window.showErrorMessage(`Failed to save converted image: ${message}`);
+      this._view.webview.postMessage({ command: 'status', text: `Failed to save converted image: ${message}` });
     }
   }
 
@@ -286,6 +349,10 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         #result img { max-width: 100%; border-radius: 4px; margin-top: 10px; }
         .prompt-box { background-color: var(--vscode-textBlockQuote-background); border-left: 4px solid var(--vscode-textBlockQuote-border); padding: 10px; margin-top: 10px; font-size: 0.9em; word-wrap: break-word; }
         .links-row { display: flex; gap: 8px; margin-bottom: 10px; }
+        .convert-row { display: flex; gap: 8px; align-items: flex-end; margin-top: 10px; }
+        .convert-row > div { flex: 1; }
+        .convert-row label { display: block; font-size: 0.8em; margin-bottom: 2px; }
+        #qualityContainer { display: none; }
     </style>
 </head>
 <body>
@@ -409,6 +476,24 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
                     </details>
                     <img src="\${message.imageUrl}" alt="Generated Image" onerror="this.alt='Failed to load image. Check logs for details.'; this.style.border='1px dashed red';" style="margin-top: 10px;" />
                     <button class="btn" id="editImageBtn" style="margin-top: 10px;">Edit This Image</button>
+                    <details style="margin-top: 10px;">
+                        <summary style="cursor: pointer; font-weight: bold;">🔄 Convert to another format</summary>
+                        <div class="convert-row">
+                            <div>
+                                <label for="convertFormat">Format</label>
+                                <select id="convertFormat">
+                                    <option value="png">PNG</option>
+                                    <option value="jpeg">JPEG</option>
+                                    <option value="webp">WebP</option>
+                                </select>
+                            </div>
+                            <div id="qualityContainer">
+                                <label for="convertQuality">Quality (<span id="qualityValue">92</span>%)</label>
+                                <input type="range" id="convertQuality" min="1" max="100" value="92" style="margin-bottom: 0;" />
+                            </div>
+                        </div>
+                        <button class="btn" id="convertSaveBtn" style="margin-top: 8px;">Convert &amp; Save</button>
+                    </details>
                 \`;
                 lastSourceUrl = message.sourceUrl;
                 lastBase64Url = message.imageUrl;
@@ -417,6 +502,52 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
                     document.getElementById('baseImagePreview').src = lastBase64Url;
                     document.getElementById('baseImageContainer').style.display = 'flex';
                     window.scrollTo({ top: 0, behavior: 'smooth' });
+                });
+
+                const convertFormat = document.getElementById('convertFormat');
+                const qualityContainer = document.getElementById('qualityContainer');
+                const convertQuality = document.getElementById('convertQuality');
+                const qualityValue = document.getElementById('qualityValue');
+
+                convertFormat.addEventListener('change', () => {
+                    qualityContainer.style.display = convertFormat.value === 'png' ? 'none' : 'block';
+                });
+
+                convertQuality.addEventListener('input', () => {
+                    qualityValue.textContent = convertQuality.value;
+                });
+
+                document.getElementById('convertSaveBtn').addEventListener('click', () => {
+                    if (!lastBase64Url) { return; }
+
+                    const format = convertFormat.value;
+                    const mime = 'image/' + format;
+                    const quality = Number(convertQuality.value) / 100;
+
+                    const img = new Image();
+                    img.onload = () => {
+                        try {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = img.naturalWidth;
+                            canvas.height = img.naturalHeight;
+                            const ctx = canvas.getContext('2d');
+
+                            if (format === 'jpeg') {
+                                ctx.fillStyle = '#FFFFFF';
+                                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            }
+                            ctx.drawImage(img, 0, 0);
+
+                            const dataUrl = canvas.toDataURL(mime, quality);
+                            vscode.postMessage({ command: 'saveConvertedImage', dataUrl, format });
+                        } catch (convErr) {
+                            document.getElementById('status').innerText = 'Conversion failed: ' + convErr.message;
+                        }
+                    };
+                    img.onerror = () => {
+                        document.getElementById('status').innerText = 'Failed to load image for conversion.';
+                    };
+                    img.src = lastBase64Url;
                 });
             } else if (message.command === 'updateContextToggle') {
                 contextEnabled = message.value;
