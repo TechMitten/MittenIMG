@@ -115,6 +115,8 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     try {
       let enhancedPrompt = userPrompt;
 
+      this._view.webview.postMessage({ command: 'status', text: 'Starting generation...' });
+
       if (useCodebaseContext && !baseImageUrl) {
         let codebaseContext = "No workspace found.";
       if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
@@ -197,15 +199,18 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
       } else {
         if (baseImageUrl) {
           outputChannel.appendLine('[Context] Image edit mode. Skipping codebase context and using exact prompt.');
+          this._view.webview.postMessage({ command: 'status', text: 'Preparing image edit...' });
         } else {
           outputChannel.appendLine('[Context] Codebase context is disabled. Using original prompt directly.');
+          this._view.webview.postMessage({ command: 'status', text: 'Preparing image prompt...' });
         }
       }
-      
+
       let uploadedImageUrl = baseImageUrl;
 
       if (baseImageUrl && baseImageUrl.startsWith('data:')) {
         outputChannel.appendLine('[Image Edit] Base image is base64. Uploading to media.pollinations.ai...');
+        this._view.webview.postMessage({ command: 'status', text: 'Uploading base image...' });
         if (!apiKey) {
            throw new Error("An API key is required to upload images for editing.");
         }
@@ -254,6 +259,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
       }
 
       outputChannel.appendLine(`[Image Gen] Image URL: ${imageUrl}`);
+      this._view.webview.postMessage({ command: 'status', text: 'Generating image...' });
 
       // Fetch the image
       const axiosConfig: AxiosRequestConfig = { responseType: 'arraybuffer' };
@@ -284,7 +290,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
       const message = error instanceof Error ? error.message : String(error);
       outputChannel.appendLine(`[Fatal Error] ${message}`);
       vscode.window.showErrorMessage(`Failed to generate: ${message}`);
-      this._view.webview.postMessage({ command: 'status', text: `Failed to generate: ${message}` });
+      this._view.webview.postMessage({ command: 'status', text: `Failed to generate: ${message}`, isError: true });
     }
   }
 
@@ -356,6 +362,10 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         textarea { height: 80px; resize: vertical; }
         .btn { width: 100%; background-color: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; padding: 8px 16px; margin-bottom: 8px; cursor: pointer; font-size: 14px; }
         .btn:hover { background-color: var(--vscode-button-hoverBackground); }
+        .btn:disabled { opacity: 0.7; cursor: default; }
+        .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--vscode-foreground); border-top-color: transparent; border-radius: 50%; margin-right: 6px; vertical-align: middle; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #status.generating { display: flex; align-items: center; }
         .btn-secondary { background-color: transparent; border: 1px solid var(--vscode-button-secondaryBackground); color: var(--vscode-foreground); font-size: 12px; padding: 4px 8px; margin-top: 6px; }
         .btn-secondary:hover { background-color: var(--vscode-button-secondaryHoverBackground); }
         .btn-secondary.active { border-color: var(--vscode-focusBorder); }
@@ -409,7 +419,8 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     <button class="btn" id="generateBtn">Generate</button>
 
     <div class="links-row" style="align-items: center;">
-        <button class="btn-secondary" id="logsBtn">📄 View Logs</button>
+        <button class="btn-secondary" id="createNewBtn" title="Reset and start over">🆕 New</button>
+        <button class="btn-secondary" id="logsBtn">📄 Logs</button>
         <button class="btn-secondary" id="settingsBtn">⚙️ Settings</button>
         <button class="btn-secondary ${useCodebaseContext ? 'active' : ''}" id="contextToggleBtn" title="Toggle Codebase Context">🌐 Context</button>
     </div>
@@ -437,7 +448,19 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         let lastSourceUrl = '';
         let lastBase64Url = '';
 
-        document.getElementById('generateBtn').addEventListener('click', () => {
+        const generateBtn = document.getElementById('generateBtn');
+        const statusDiv = document.getElementById('status');
+        let isGenerating = false;
+
+        function setGenerating(generating, text) {
+            isGenerating = generating;
+            generateBtn.disabled = generating;
+            generateBtn.textContent = generating ? 'Generating…' : 'Generate';
+            statusDiv.classList.toggle('generating', generating);
+            statusDiv.innerHTML = generating ? '<span class="spinner"></span><span>' + (text || 'Starting generation...') + '</span>' : (text || '');
+        }
+
+        generateBtn.addEventListener('click', () => {
             let finalWidth, finalHeight;
             if (sizePreset.value === 'custom') {
                 finalWidth = widthInput.value;
@@ -448,8 +471,10 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
                 finalHeight = h;
             }
 
-            vscode.postMessage({ 
-                command: 'generate', 
+            setGenerating(true);
+
+            vscode.postMessage({
+                command: 'generate',
                 text: document.getElementById('promptInput').value,
                 width: finalWidth,
                 height: finalHeight,
@@ -460,6 +485,30 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         document.getElementById('clearBaseImageBtn').addEventListener('click', () => {
             currentBaseImageUrl = '';
             document.getElementById('baseImageContainer').style.display = 'none';
+        });
+
+        function resetUI() {
+            document.getElementById('promptInput').value = '';
+
+            sizePreset.value = '512x512';
+            customSizeContainer.style.display = 'none';
+            widthInput.value = '512';
+            heightInput.value = '512';
+
+            currentBaseImageUrl = '';
+            document.getElementById('baseImageContainer').style.display = 'none';
+
+            lastSourceUrl = '';
+            lastBase64Url = '';
+
+            setGenerating(false, '');
+            statusDiv.classList.remove('generating');
+            statusDiv.textContent = '';
+            document.getElementById('result').innerHTML = '';
+        }
+
+        document.getElementById('createNewBtn').addEventListener('click', () => {
+            resetUI();
         });
 
         document.getElementById('logsBtn').addEventListener('click', () => {
@@ -481,11 +530,18 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         window.addEventListener('message', event => {
             const message = event.data;
             if (message.command === 'status') {
-                document.getElementById('status').innerText = message.text;
+                if (message.isError) {
+                    setGenerating(false, message.text);
+                } else if (isGenerating) {
+                    setGenerating(true, message.text);
+                } else {
+                    statusDiv.classList.remove('generating');
+                    statusDiv.textContent = message.text;
+                }
             } else if (message.command === 'result') {
-                document.getElementById('status').innerText = 'Done!';
+                setGenerating(false, 'Done!');
                 document.getElementById('result').innerHTML = \`
-                    <details>
+                    <details style="display: none;">
                         <summary style="cursor: pointer; font-weight: bold; margin-bottom: 5px;">Prompt Used:</summary>
                         <div class="prompt-box">\${message.enhancedPrompt}</div>
                     </details>
@@ -516,6 +572,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
                     currentBaseImageUrl = lastBase64Url;
                     document.getElementById('baseImagePreview').src = lastBase64Url;
                     document.getElementById('baseImageContainer').style.display = 'flex';
+                    document.getElementById('promptInput').value = '';
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                 });
 

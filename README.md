@@ -26,27 +26,7 @@ MittenIMG reads your codebase for context, enhances your prompt with an LLM, and
 
 ## Installation
 
-> MittenIMG is not yet published to the VS Code Marketplace. To try it locally:
-
-```bash
-git clone https://github.com/TechMitten/image-extension.git
-cd image-extension
-npm install
-```
-
-Then, in VS Code:
-
-1. Open the folder in VS Code.
-2. Press `F5` to launch an Extension Development Host with MittenIMG loaded.
-
-Or package it yourself:
-
-```bash
-npm run package
-npx vsce package
-```
-
-This produces a `.vsix` file you can install via **Extensions → ... → Install from VSIX**.
+Install **MittenIMG** from the Extensions view in VS Code (`Ctrl+Shift+X` / `Cmd+Shift+X`), or from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=TechRayApps.imagemitten).
 
 ## Usage
 
@@ -59,7 +39,7 @@ This produces a `.vsix` file you can install via **Extensions → ... → Instal
    - Expand **🔄 Convert to another format** to save it as PNG, JPEG, or WebP.
    - Expand **Prompt Used** to see exactly what prompt was sent to the image model.
 
-Use the toolbar buttons to **📄 View Logs** (open the output channel), open **⚙️ Settings**, or toggle **🌐 Context** (codebase-aware prompting) on/off.
+Use the toolbar buttons to **📄 Logs** (open the output channel), open **⚙️ Settings**, or toggle **🌐 Context** (codebase-aware prompting) on/off.
 
 Generated images are automatically saved to an `imagemitten/` folder at the root of your workspace.
 
@@ -107,21 +87,10 @@ All requests and responses are logged to the **MittenIMG** output channel for tr
 - VS Code `^1.74.0` or later
 - A [Pollinations](https://pollinations.ai) API key (optional, but required for prompt enhancement and image editing)
 
-## Development
-
-```bash
-npm install       # install dependencies
-npm run watch     # webpack in watch mode
-npm run lint      # lint the source
-npm test          # compile and run the test suite
-```
-
-Press `F5` in VS Code to launch the Extension Development Host and iterate live.
-
 ## Privacy note
 
 When codebase context is enabled, file contents from your open workspace are sent to a third-party LLM endpoint (via Pollinations) to enhance your prompt. Disable **🌐 Context** in the sidebar, or set `imagemitten.useCodebaseContext` to `false`, if you'd rather your prompt be sent as-is.
 
 ## License
 
-No license has been specified for this project yet.
+[Apache 2.0](LICENSE.md)

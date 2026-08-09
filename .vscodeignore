@@ -1,0 +1,15 @@
+.vscode/**
+.devcontainer/**
+.git/**
+src/**
+out/**
+node_modules/**
+webpack.config.js
+tsconfig.json
+eslint.config.mjs
+package-lock.json
+CLAUDE.md
+pollinationsapi.md
+**/*.map
+**/.gitignore
+media/icon.svg
