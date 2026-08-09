@@ -4,7 +4,7 @@
   "description": "Generates images based on codebase context using Pollinations API and LLM prompt enhancement.",
   "version": "0.0.3",
   "publisher": "TechRayApps",
-  "license": "Apache-2.0",
+  "license": "MIT",
   "icon": "media/logo.png",
   "repository": {
     "type": "git",

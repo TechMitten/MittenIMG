@@ -105,4 +105,4 @@ When codebase context is enabled, file contents from your open workspace are sen
 
 ## License
 
-[Apache 2.0](LICENSE.md)
+[MIT](LICENSE.md)
