@@ -2,24 +2,24 @@ import * as vscode from 'vscode';
 import axios from 'axios';
 import { Buffer } from 'buffer';
 
-const outputChannel = vscode.window.createOutputChannel('Image Generator');
+const outputChannel = vscode.window.createOutputChannel('ImageMitten');
 
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(outputChannel);
 
-  const provider = new ImageGeneratorViewProvider(context.extensionUri);
+  const provider = new ImageMittenViewProvider(context.extensionUri);
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('image-generator-sidebar.view', provider)
+    vscode.window.registerWebviewViewProvider('imagemitten-sidebar.view', provider)
   );
 
-  let disposable = vscode.commands.registerCommand('image-generator-ext.start', () => {
-    vscode.commands.executeCommand('image-generator-sidebar.view.focus');
+  let disposable = vscode.commands.registerCommand('imagemitten.start', () => {
+    vscode.commands.executeCommand('imagemitten-sidebar.view.focus');
   });
 
   context.subscriptions.push(disposable);
 }
 
-class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
+class ImageMittenViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
 
   constructor(private readonly _extensionUri: vscode.Uri) {}
@@ -47,17 +47,17 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
           outputChannel.show();
           break;
         case 'openSettings':
-          vscode.commands.executeCommand('workbench.action.openSettings', 'image-generator');
+          vscode.commands.executeCommand('workbench.action.openSettings', 'imagemitten');
           break;
         case 'toggleContext':
-          vscode.workspace.getConfiguration('image-generator').update('useCodebaseContext', message.value, vscode.ConfigurationTarget.Global);
+          vscode.workspace.getConfiguration('imagemitten').update('useCodebaseContext', message.value, vscode.ConfigurationTarget.Global);
           break;
       }
     });
 
     const configListener = vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('image-generator.useCodebaseContext')) {
-        const config = vscode.workspace.getConfiguration('image-generator');
+      if (e.affectsConfiguration('imagemitten.useCodebaseContext')) {
+        const config = vscode.workspace.getConfiguration('imagemitten');
         const useCodebaseContext = config.get<boolean>('useCodebaseContext', true);
         this._view?.webview.postMessage({ command: 'updateContextToggle', value: useCodebaseContext });
       }
@@ -70,7 +70,7 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
 
   private _updateHtml() {
     if (!this._view) return;
-    const config = vscode.workspace.getConfiguration('image-generator');
+    const config = vscode.workspace.getConfiguration('imagemitten');
     const useCodebaseContext = config.get<boolean>('useCodebaseContext', true);
     this._view.webview.html = this._getMainHtml(useCodebaseContext);
   }
@@ -91,7 +91,7 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
       POLLINATIONS_IMAGE_NOLOGO: 'true'
     };
 
-    const config = vscode.workspace.getConfiguration('image-generator');
+    const config = vscode.workspace.getConfiguration('imagemitten');
     const apiKey = config.get<string>('pollinationsApiKey');
     const useCodebaseContext = config.get<boolean>('useCodebaseContext', true);
 
@@ -246,7 +246,7 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
       // Save image to workspace
       if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
         const workspaceUri = vscode.workspace.workspaceFolders[0].uri;
-        const imageGenFolderUri = vscode.Uri.joinPath(workspaceUri, 'imagegen');
+        const imageGenFolderUri = vscode.Uri.joinPath(workspaceUri, 'imagemitten');
         await vscode.workspace.fs.createDirectory(imageGenFolderUri);
         const fileName = `image_${Date.now()}.png`;
         const fileUri = vscode.Uri.joinPath(imageGenFolderUri, fileName);
@@ -271,7 +271,7 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Image Generator</title>
+    <title>ImageMitten</title>
     <style>
         body { font-family: var(--vscode-font-family); padding: 10px; color: var(--vscode-editor-foreground); background-color: var(--vscode-editor-background); }
         textarea, select, input { width: 100%; background-color: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); padding: 8px; margin-bottom: 10px; box-sizing: border-box; }
@@ -290,7 +290,7 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
     <h3>Generate Images</h3>
-    <p style="font-size: 0.9em;">Uses workspace context & Pollinations AI.</p>
+    <p style="font-size: 0.9em;">Describe your image below:</p>
     
     <textarea id="promptInput" placeholder="E.g., Generate a hero illustration for this project..."></textarea>
     
@@ -403,9 +403,11 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
             } else if (message.command === 'result') {
                 document.getElementById('status').innerText = 'Done!';
                 document.getElementById('result').innerHTML = \`
-                    <strong>Prompt Used:</strong>
-                    <div class="prompt-box">\${message.enhancedPrompt}</div>
-                    <img src="\${message.imageUrl}" alt="Generated Image" onerror="this.alt='Failed to load image. Check logs for details.'; this.style.border='1px dashed red';" />
+                    <details>
+                        <summary style="cursor: pointer; font-weight: bold; margin-bottom: 5px;">Prompt Used:</summary>
+                        <div class="prompt-box">\${message.enhancedPrompt}</div>
+                    </details>
+                    <img src="\${message.imageUrl}" alt="Generated Image" onerror="this.alt='Failed to load image. Check logs for details.'; this.style.border='1px dashed red';" style="margin-top: 10px;" />
                     <button class="btn" id="editImageBtn" style="margin-top: 10px;">Edit This Image</button>
                 \`;
                 lastSourceUrl = message.sourceUrl;

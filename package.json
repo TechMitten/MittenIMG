@@ -1,6 +1,6 @@
 {
-  "name": "image-generator-ext",
-  "displayName": "AI Image Generation Assistant",
+  "name": "imagemitten",
+  "displayName": "ImageMitten",
   "description": "Generates images based on codebase context using OpenRouter",
   "version": "0.0.1",
   "engines": {
@@ -13,14 +13,14 @@
   "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
-      "title": "Image Generator",
+      "title": "ImageMitten",
       "properties": {
-        "image-generator.useCodebaseContext": {
+        "imagemitten.useCodebaseContext": {
           "type": "boolean",
           "default": true,
           "description": "Whether to use codebase context and LLM to enhance the prompt before generating the image. If disabled, prompt is sent directly as typed."
         },
-        "image-generator.pollinationsApiKey": {
+        "imagemitten.pollinationsApiKey": {
           "type": "string",
           "default": "",
           "description": "Pollinations API Key for LLM Prompt Enhancement and Image Generation"
@@ -30,25 +30,25 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "image-generator-sidebar",
-          "title": "Image Generator",
+          "id": "imagemitten-sidebar",
+          "title": "ImageMitten",
           "icon": "media/icon.svg"
         }
       ]
     },
     "views": {
-      "image-generator-sidebar": [
+      "imagemitten-sidebar": [
         {
           "type": "webview",
-          "id": "image-generator-sidebar.view",
+          "id": "imagemitten-sidebar.view",
           "name": "Generate Images"
         }
       ]
     },
     "commands": [
       {
-        "command": "image-generator-ext.start",
-        "title": "Start Image Generation Assistant"
+        "command": "imagemitten.start",
+        "title": "Start ImageMitten"
       }
     ]
   },
@@ -64,17 +64,20 @@
     "test": "node ./out/test/runTest.js"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/glob": "^8.0.0",
     "@types/mocha": "^10.0.1",
     "@types/node": "16.x",
     "@types/vscode": "^1.125.0",
     "@typescript-eslint/eslint-plugin": "^5.45.0",
     "@typescript-eslint/parser": "^5.45.0",
-    "eslint": "^8.28.0",
+    "eslint": "^8.57.1",
     "glob": "^8.0.3",
+    "globals": "^17.9.0",
     "mocha": "^10.1.0",
     "ts-loader": "^9.4.2",
     "typescript": "^4.9.3",
+    "typescript-eslint": "^8.66.0",
     "webpack": "^5.75.0",
     "webpack-cli": "^5.0.1"
   },
