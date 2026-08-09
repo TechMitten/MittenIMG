@@ -10,6 +10,62 @@ const outputChannel = vscode.window.createOutputChannel('MittenIMG');
 const POLLINATIONS_APP_CLIENT_ID: string = 'pk_FVW0aHD89fKjqZwT';
 const POLLINATIONS_OAUTH_TOKEN_SECRET_KEY = 'mittenimg.pollinationsOAuthToken';
 const ONBOARDING_DISMISSED_KEY = 'mittenimg.onboardingDismissed';
+const POLLINATIONS_IMAGE_MODELS_ENDPOINT = 'https://gen.pollinations.ai/image/models';
+const DEFAULT_IMAGE_MODEL = 'zimage';
+const DEFAULT_EDIT_IMAGE_MODEL = 'gpt-image-2';
+
+interface ImageModelOption {
+  name: string;
+  title: string;
+}
+
+// Used for the initial render and as a safety net if GET /image/models is unreachable.
+// Kept roughly in sync with the "Available models" list in pollinationsapi.md.
+const FALLBACK_IMAGE_MODELS: ImageModelOption[] = [
+  { name: 'zimage', title: 'Z-Image Turbo' },
+  { name: 'flux', title: 'FLUX.1 Schnell' },
+  { name: 'krea', title: 'Krea 2 Medium' },
+  { name: 'dreamshaper', title: 'DreamShaper 8 LCM' },
+  { name: 'kontext', title: 'FLUX.1 Kontext Pro' },
+  { name: 'klein', title: 'FLUX.2 Klein 4B' },
+  { name: 'nanobanana', title: 'Nano Banana' },
+  { name: 'nanobanana-2', title: 'Nano Banana 2' },
+  { name: 'nanobanana-2-lite', title: 'Nano Banana 2 Lite' },
+  { name: 'nanobanana-pro', title: 'Nano Banana Pro' },
+  { name: 'seedream', title: 'Seedream 4.0' },
+  { name: 'seedream-pro', title: 'Seedream 4.5' },
+  { name: 'seedream5', title: 'Seedream 5.0 Lite' },
+  { name: 'seedream5-pro', title: 'Seedream 5.0 Pro' },
+  { name: 'ideogram-v4-turbo', title: 'Ideogram 4.0 Turbo' },
+  { name: 'ideogram-v4-balanced', title: 'Ideogram 4.0 Balanced' },
+  { name: 'ideogram-v4-quality', title: 'Ideogram 4.0 Quality' },
+  { name: 'gptimage', title: 'GPT Image 1 Mini' },
+  { name: 'gptimage-large', title: 'GPT Image 1.5' },
+  { name: 'gpt-image-2', title: 'GPT Image 2' },
+  { name: 'wan-image', title: 'Wan 2.7 Image' },
+  { name: 'wan-image-pro', title: 'Wan 2.7 Image Pro' },
+  { name: 'qwen-image', title: 'Qwen Image' },
+  { name: 'grok-imagine', title: 'Grok Imagine' },
+  { name: 'grok-imagine-pro', title: 'Grok Imagine Pro' },
+  { name: 'recraft-v4.1-vector', title: 'Recraft V4.1 Vector' },
+  { name: 'p-image', title: 'Pruna p-image' },
+  { name: 'p-image-edit', title: 'Pruna p-image-edit' },
+  { name: 'nova-canvas', title: 'Nova Canvas' }
+];
+
+// Subset of FALLBACK_IMAGE_MODELS whose `input_modalities` includes "image" per GET /image/models,
+// i.e. models that actually accept a reference image for image-to-image editing.
+const TEXT_ONLY_FALLBACK_MODEL_NAMES = new Set(['zimage', 'flux', 'dreamshaper', 'ideogram-v4-turbo', 'ideogram-v4-balanced', 'ideogram-v4-quality', 'p-image']);
+const FALLBACK_EDIT_IMAGE_MODELS: ImageModelOption[] = FALLBACK_IMAGE_MODELS.filter(m => !TEXT_ONLY_FALLBACK_MODEL_NAMES.has(m.name));
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(outputChannel);
@@ -29,6 +85,8 @@ export function activate(context: vscode.ExtensionContext) {
 class ImageMittenViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private _devicePollTimer?: ReturnType<typeof setInterval>;
+  private _imageModels: ImageModelOption[] = FALLBACK_IMAGE_MODELS;
+  private _editImageModels: ImageModelOption[] = FALLBACK_EDIT_IMAGE_MODELS;
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -49,11 +107,12 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     };
 
     this._updateHtml();
+    void this._refreshImageModels();
 
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.command) {
         case 'generate':
-          await this.handleGenerate(message.text, message.width, message.height, message.baseImageUrl);
+          await this.handleGenerate(message.text, message.width, message.height, message.baseImageUrl, message.model);
           break;
         case 'showOutput':
           outputChannel.show();
@@ -99,7 +158,40 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     const connected = !!(await this._secrets.get(POLLINATIONS_OAUTH_TOKEN_SECRET_KEY));
     const onboardingDismissed = this._globalState.get<boolean>(ONBOARDING_DISMISSED_KEY, false);
     const showOnboarding = !connected && !onboardingDismissed;
-    this._view.webview.html = this._getMainHtml(useCodebaseContext, connected, showOnboarding);
+    this._view.webview.html = this._getMainHtml(useCodebaseContext, connected, showOnboarding, this._imageModels, this._editImageModels);
+  }
+
+  /** Fetches the live image model catalog and pushes it to the webview if it changed. */
+  private async _refreshImageModels(): Promise<void> {
+    try {
+      const { data } = await axios.get(POLLINATIONS_IMAGE_MODELS_ENDPOINT);
+      if (!Array.isArray(data)) {
+        throw new Error('Unexpected response shape from /image/models');
+      }
+
+      type RawModel = { name: string; category?: string; title?: string; input_modalities?: string[] };
+
+      const imageModels = data.filter((m: unknown): m is RawModel =>
+        !!m && typeof (m as { name?: unknown }).name === 'string' &&
+        (m as { category?: unknown }).category === 'image' &&
+        !(m as { name: string }).name.includes('/'));
+
+      if (imageModels.length === 0) {
+        throw new Error('No image models returned');
+      }
+
+      const toOption = (m: RawModel): ImageModelOption => ({ name: m.name, title: m.title || m.name });
+      const models = imageModels.map(toOption);
+      const editModels = imageModels.filter(m => Array.isArray(m.input_modalities) && m.input_modalities.includes('image')).map(toOption);
+
+      this._imageModels = models;
+      this._editImageModels = editModels.length > 0 ? editModels : FALLBACK_EDIT_IMAGE_MODELS;
+      outputChannel.appendLine(`[Models] Loaded ${models.length} image models (${editModels.length} support image-to-image editing) from ${POLLINATIONS_IMAGE_MODELS_ENDPOINT}.`);
+      this._view?.webview.postMessage({ command: 'updateImageModels', models: this._imageModels, editModels: this._editImageModels });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      outputChannel.appendLine(`[Models Warning] Failed to fetch image models from ${POLLINATIONS_IMAGE_MODELS_ENDPOINT}, using fallback list: ${message}`);
+    }
   }
 
   private _buildContextExcludePattern(): string {
@@ -218,7 +310,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     this._view?.webview.postMessage({ command: 'status', text: 'Disconnected from Pollinations.' });
   }
 
-  private async handleGenerate(userPrompt: string, width?: string, height?: string, baseImageUrl?: string) {
+  private async handleGenerate(userPrompt: string, width?: string, height?: string, baseImageUrl?: string, imageModel?: string) {
     if (!this._view) return;
 
     outputChannel.appendLine('========================================');
@@ -228,11 +320,13 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
       POLLINATIONS_TEXT_MODEL: 'openai',
       POLLINATIONS_TEXT_ENDPOINT: 'https://gen.pollinations.ai/v1/chat/completions',
       POLLINATIONS_IMAGE_ENDPOINT: 'https://gen.pollinations.ai/image/',
-      POLLINATIONS_IMAGE_MODEL: 'zimage',
+      POLLINATIONS_IMAGE_MODEL: imageModel || (baseImageUrl ? DEFAULT_EDIT_IMAGE_MODEL : DEFAULT_IMAGE_MODEL),
       POLLINATIONS_IMAGE_WIDTH: width || '512',
       POLLINATIONS_IMAGE_HEIGHT: height || '512',
       POLLINATIONS_IMAGE_NOLOGO: 'true'
     };
+
+    outputChannel.appendLine(`[Image Gen] Requested model: ${configVars['POLLINATIONS_IMAGE_MODEL']}`);
 
     const config = vscode.workspace.getConfiguration('mittenimg');
     const { key: apiKey, source: apiKeySource } = await this.getActiveApiKey();
@@ -380,10 +474,10 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
       }
 
       const encodedPrompt = encodeURIComponent(enhancedPrompt);
-      let imgModel = encodeURIComponent(configVars['POLLINATIONS_IMAGE_MODEL']);
-      
+      const imgModel = encodeURIComponent(configVars['POLLINATIONS_IMAGE_MODEL']);
+
       if (uploadedImageUrl) {
-        imgModel = encodeURIComponent('gpt-image-2');
+        outputChannel.appendLine(`[Image Gen] Editing an existing image with model: ${configVars['POLLINATIONS_IMAGE_MODEL']}`);
       }
 
       const imgWidth = encodeURIComponent(configVars['POLLINATIONS_IMAGE_WIDTH']);
@@ -495,7 +589,13 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private _getMainHtml(useCodebaseContext: boolean, connected: boolean, showOnboarding: boolean) {
+  private _getMainHtml(useCodebaseContext: boolean, connected: boolean, showOnboarding: boolean, imageModels: ImageModelOption[], editImageModels: ImageModelOption[]) {
+    const renderOptions = (models: ImageModelOption[], defaultName: string) => models
+      .map(m => `<option value="${escapeHtml(m.name)}"${m.name === defaultName ? ' selected' : ''}>${escapeHtml(m.title)}</option>`)
+      .join('');
+    const modelOptionsHtml = renderOptions(imageModels, DEFAULT_IMAGE_MODEL);
+    const editModelOptionsHtml = renderOptions(editImageModels, DEFAULT_EDIT_IMAGE_MODEL);
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -532,6 +632,9 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         #onboardingStatusLine { font-size: 0.85em; margin-bottom: 12px; min-height: 1.2em; }
         #deviceCodeBox { display: none; margin: 14px 0; padding: 10px; background-color: var(--vscode-textBlockQuote-background); border-left: 4px solid var(--vscode-textBlockQuote-border); font-size: 0.85em; text-align: left; }
         #deviceCodeBox code { font-size: 1.15em; font-weight: bold; letter-spacing: 0.05em; }
+        .device-code-row { display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; }
+        .copy-code-btn { font-size: 0.85em; padding: 2px 8px; border: 1px solid var(--vscode-button-border, transparent); border-radius: 3px; background-color: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); cursor: pointer; }
+        .copy-code-btn:hover { background-color: var(--vscode-button-secondaryHoverBackground); }
         .onboarding-footer { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; align-items: center; font-size: 0.8em; }
         .onboarding-footer a { color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: none; }
         .onboarding-footer a:hover { text-decoration: underline; }
@@ -554,7 +657,11 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         <button class="btn-secondary" id="onboardingDisconnectBtn" style="${connected ? '' : 'display: none;'} width: 100%;">Disconnect</button>
 
         <div id="deviceCodeBox">
-            Go to <a href="#" id="verificationLink" target="_blank" rel="noopener">enter.pollinations.ai/device</a> and enter code: <code id="userCodeText"></code>
+            Go to <a href="#" id="verificationLink" target="_blank" rel="noopener">enter.pollinations.ai/device</a> and enter code:
+            <span class="device-code-row">
+                <code id="userCodeText"></code>
+                <button class="copy-code-btn" id="copyCodeBtn" title="Copy code to clipboard">📋 Copy</button>
+            </span>
         </div>
 
         <div class="onboarding-footer">
@@ -582,6 +689,11 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
                 <option value="1024x1024">High Res Square (1024x1024)</option>
                 <option value="custom">Custom...</option>
             </select>
+        </div>
+        <div style="flex: 1;">
+            <label for="modelSelect" style="font-size: 0.8em;">Image Model</label>
+            <select id="modelSelect">${modelOptionsHtml}</select>
+            <select id="editModelSelect" style="display: none;">${editModelOptionsHtml}</select>
         </div>
     </div>
 
@@ -622,6 +734,8 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         const customSizeContainer = document.getElementById('customSizeContainer');
         const widthInput = document.getElementById('widthInput');
         const heightInput = document.getElementById('heightInput');
+        const modelSelect = document.getElementById('modelSelect');
+        const editModelSelect = document.getElementById('editModelSelect');
 
         sizePreset.addEventListener('change', () => {
             if (sizePreset.value === 'custom') {
@@ -632,9 +746,20 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
             saveState();
         });
 
+        function setModelSelectEditMode(editing) {
+            modelSelect.style.display = editing ? 'none' : 'block';
+            editModelSelect.style.display = editing ? 'block' : 'none';
+        }
+
+        function currentModelValue() {
+            return editModelSelect.style.display !== 'none' ? editModelSelect.value : modelSelect.value;
+        }
+
         document.getElementById('promptInput').addEventListener('input', saveState);
         widthInput.addEventListener('input', saveState);
         heightInput.addEventListener('input', saveState);
+        modelSelect.addEventListener('change', saveState);
+        editModelSelect.addEventListener('change', saveState);
 
         let currentBaseImageUrl = '';
         let lastSourceUrl = '';
@@ -647,6 +772,8 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
                 sizePreset: sizePreset.value,
                 width: widthInput.value,
                 height: heightInput.value,
+                model: modelSelect.value,
+                editModel: editModelSelect.value,
                 baseImageUrl: currentBaseImageUrl,
                 lastSourceUrl: lastSourceUrl,
                 lastBase64Url: lastBase64Url,
@@ -684,6 +811,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
                 text: document.getElementById('promptInput').value,
                 width: finalWidth,
                 height: finalHeight,
+                model: currentModelValue(),
                 baseImageUrl: currentBaseImageUrl
             });
         });
@@ -691,6 +819,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         document.getElementById('clearBaseImageBtn').addEventListener('click', () => {
             currentBaseImageUrl = '';
             document.getElementById('baseImageContainer').style.display = 'none';
+            setModelSelectEditMode(false);
             saveState();
         });
 
@@ -701,9 +830,12 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
             customSizeContainer.style.display = 'none';
             widthInput.value = '512';
             heightInput.value = '512';
+            modelSelect.value = '${DEFAULT_IMAGE_MODEL}';
+            editModelSelect.value = '${DEFAULT_EDIT_IMAGE_MODEL}';
 
             currentBaseImageUrl = '';
             document.getElementById('baseImageContainer').style.display = 'none';
+            setModelSelectEditMode(false);
 
             lastSourceUrl = '';
             lastBase64Url = '';
@@ -801,6 +933,25 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 
         manageAccountLink.addEventListener('click', showOnboardingScreen);
 
+        const copyCodeBtn = document.getElementById('copyCodeBtn');
+        copyCodeBtn.addEventListener('click', async () => {
+            const code = document.getElementById('userCodeText').textContent;
+            try {
+                await navigator.clipboard.writeText(code);
+            } catch (err) {
+                const textarea = document.createElement('textarea');
+                textarea.value = code;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+            }
+            copyCodeBtn.textContent = '✅ Copied!';
+            setTimeout(() => { copyCodeBtn.textContent = '📋 Copy'; }, 1500);
+        });
+
         updateConnectionUi();
 
         function renderResult(imageUrl, enhancedPrompt, sourceUrl) {
@@ -840,6 +991,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
                 document.getElementById('baseImagePreview').src = lastBase64Url;
                 document.getElementById('baseImageContainer').style.display = 'flex';
                 document.getElementById('promptInput').value = '';
+                setModelSelectEditMode(true);
                 window.scrollTo({ top: 0, behavior: 'smooth' });
                 saveState();
             });
@@ -900,10 +1052,17 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
             }
             if (savedState.width) { widthInput.value = savedState.width; }
             if (savedState.height) { heightInput.value = savedState.height; }
+            if (savedState.model && [...modelSelect.options].some(o => o.value === savedState.model)) {
+                modelSelect.value = savedState.model;
+            }
+            if (savedState.editModel && [...editModelSelect.options].some(o => o.value === savedState.editModel)) {
+                editModelSelect.value = savedState.editModel;
+            }
             if (savedState.baseImageUrl) {
                 currentBaseImageUrl = savedState.baseImageUrl;
                 document.getElementById('baseImagePreview').src = savedState.baseImageUrl;
                 document.getElementById('baseImageContainer').style.display = 'flex';
+                setModelSelectEditMode(true);
             }
             if (savedState.lastBase64Url) {
                 renderResult(savedState.lastBase64Url, savedState.lastEnhancedPrompt || '', savedState.lastSourceUrl || '');
@@ -932,10 +1091,23 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
             } else if (message.command === 'updateContextToggle') {
                 contextEnabled = message.value;
                 document.getElementById('contextToggleBtn').classList.toggle('active', contextEnabled);
+            } else if (message.command === 'updateImageModels') {
+                const buildOptions = models => models.map(m =>
+                    '<option value="' + m.name.replace(/"/g, '&quot;') + '">' + m.title.replace(/</g, '&lt;') + '</option>'
+                ).join('');
+
+                const previousModel = modelSelect.value;
+                modelSelect.innerHTML = buildOptions(message.models);
+                modelSelect.value = message.models.some(m => m.name === previousModel) ? previousModel : '${DEFAULT_IMAGE_MODEL}';
+
+                const previousEditModel = editModelSelect.value;
+                editModelSelect.innerHTML = buildOptions(message.editModels);
+                editModelSelect.value = message.editModels.some(m => m.name === previousEditModel) ? previousEditModel : '${DEFAULT_EDIT_IMAGE_MODEL}';
             } else if (message.command === 'connectPending') {
                 document.getElementById('userCodeText').textContent = message.userCode;
                 document.getElementById('verificationLink').href = message.verificationUrl;
                 deviceCodeBox.style.display = 'block';
+                copyCodeBtn.textContent = '📋 Copy';
             } else if (message.command === 'connectionStatus') {
                 const wasConnecting = connecting;
                 connecting = false;
