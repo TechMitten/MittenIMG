@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="media/icon.svg" width="64" height="64" alt="ImageMitten icon" />
+<img src="media/icon.svg" width="64" height="64" alt="MittenIMG icon" />
 
-# ImageMitten
+# MittenIMG
 
 **Generate images for your project without leaving VS Code.**
 
-ImageMitten reads your codebase for context, enhances your prompt with an LLM, and generates an image — right from the sidebar.
+MittenIMG reads your codebase for context, enhances your prompt with an LLM, and generates an image — right from the sidebar.
 
 [Features](#features) • [Installation](#installation) • [Usage](#usage) • [Configuration](#configuration) • [How it works](#how-it-works)
 
@@ -26,7 +26,7 @@ ImageMitten reads your codebase for context, enhances your prompt with an LLM, a
 
 ## Installation
 
-> ImageMitten is not yet published to the VS Code Marketplace. To try it locally:
+> MittenIMG is not yet published to the VS Code Marketplace. To try it locally:
 
 ```bash
 git clone https://github.com/TechMitten/image-extension.git
@@ -37,7 +37,7 @@ npm install
 Then, in VS Code:
 
 1. Open the folder in VS Code.
-2. Press `F5` to launch an Extension Development Host with ImageMitten loaded.
+2. Press `F5` to launch an Extension Development Host with MittenIMG loaded.
 
 Or package it yourself:
 
@@ -50,7 +50,7 @@ This produces a `.vsix` file you can install via **Extensions → ... → Instal
 
 ## Usage
 
-1. Open the **ImageMitten** icon in the Activity Bar.
+1. Open the **MittenIMG** icon in the Activity Bar.
 2. Type a description of the image you want in the prompt box.
 3. Pick a size preset (or choose **Custom...** to set your own width/height).
 4. Click **Generate**.
@@ -65,7 +65,7 @@ Generated images are automatically saved to an `imagemitten/` folder at the root
 
 ## Configuration
 
-Configure ImageMitten under **Settings → Extensions → ImageMitten**, or by editing `settings.json`:
+Configure MittenIMG under **Settings → Extensions → MittenIMG**, or by editing `settings.json`:
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
@@ -79,7 +79,7 @@ Configure ImageMitten under **Settings → Extensions → ImageMitten**, or by e
 }
 ```
 
-> **Note:** Without an API key, ImageMitten skips prompt enhancement and image editing but will still attempt basic image generation.
+> **Note:** Without an API key, MittenIMG skips prompt enhancement and image editing but will still attempt basic image generation.
 
 ## How it works
 
@@ -95,12 +95,12 @@ flowchart LR
     F --> H[Preview in sidebar]
 ```
 
-1. **Context gathering** — if enabled, ImageMitten walks your workspace (excluding `node_modules`, `.git`, `dist`, `out`) and builds a text blob of file contents, capped at a reasonable size.
+1. **Context gathering** — if enabled, MittenIMG walks your workspace (excluding `node_modules`, `.git`, `dist`, `out`) and builds a text blob of file contents, capped at a reasonable size.
 2. **Prompt enhancement** — that context, along with your prompt, is sent to a text model via the Pollinations API, which returns a richer, more specific image-generation prompt.
 3. **Image generation** — the enhanced prompt is sent to Pollinations' image endpoint, with support for custom dimensions and, when editing, a base image.
 4. **Delivery** — the resulting image is streamed back into the sidebar and saved into an `imagemitten/` folder in your workspace.
 
-All requests and responses are logged to the **ImageMitten** output channel for transparency and troubleshooting.
+All requests and responses are logged to the **MittenIMG** output channel for transparency and troubleshooting.
 
 ## Requirements
 

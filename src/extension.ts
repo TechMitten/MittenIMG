@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import axios, { AxiosRequestConfig } from 'axios';
 import { Buffer } from 'buffer';
 
-const outputChannel = vscode.window.createOutputChannel('ImageMitten');
+const outputChannel = vscode.window.createOutputChannel('MittenIMG');
 
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(outputChannel);
@@ -334,7 +334,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ImageMitten</title>
+    <title>MittenIMG</title>
     <style>
         body { font-family: var(--vscode-font-family); padding: 10px; color: var(--vscode-editor-foreground); background-color: var(--vscode-editor-background); }
         textarea, select, input { width: 100%; background-color: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); padding: 8px; margin-bottom: 10px; box-sizing: border-box; }

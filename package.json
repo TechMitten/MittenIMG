@@ -1,6 +1,6 @@
 {
   "name": "imagemitten",
-  "displayName": "ImageMitten",
+  "displayName": "MittenIMG",
   "description": "Generates images based on codebase context using Pollinations API and LLM prompt enhancement.",
   "version": "0.0.1",
   "icon": "media/logo.png",
@@ -14,7 +14,7 @@
   "main": "./dist/extension.js",
   "contributes": {
     "configuration": {
-      "title": "ImageMitten",
+      "title": "MittenIMG",
       "properties": {
         "imagemitten.useCodebaseContext": {
           "type": "boolean",
@@ -32,7 +32,7 @@
       "activitybar": [
         {
           "id": "imagemitten-sidebar",
-          "title": "ImageMitten",
+          "title": "MittenIMG",
           "icon": "media/icon-activitybar.png"
         }
       ]
@@ -49,7 +49,7 @@
     "commands": [
       {
         "command": "imagemitten.start",
-        "title": "Start ImageMitten"
+        "title": "Start MittenIMG"
       }
     ]
   },
