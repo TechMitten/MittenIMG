@@ -21,7 +21,7 @@ MittenIMG reads your codebase for context, enhances your prompt with an LLM, and
 - ✏️ **Image editing / iteration** — take a generated image and use it as the base for a follow-up edit, so you can refine results turn by turn.
 - 📐 **Size presets & custom dimensions** — square, landscape, portrait, high-res, or set your own width/height.
 - 🔄 **Format conversion** — convert and save results as PNG, JPEG, or WebP with adjustable quality, directly from the panel.
-- 💾 **Auto-save to workspace** — every generated image is written to an `imagemitten/` folder in your project.
+- 💾 **Auto-save to workspace** — every generated image is written to a `MittenIMG/` folder in your project.
 - 📄 **Built-in logging** — an output channel shows exactly what was sent and received for easy debugging.
 
 ## Installation
@@ -41,7 +41,7 @@ Install **MittenIMG** from the Extensions view in VS Code (`Ctrl+Shift+X` / `Cmd
 
 Use the toolbar buttons to **📄 Logs** (open the output channel), open **⚙️ Settings**, or toggle **🌐 Context** (codebase-aware prompting) on/off.
 
-Generated images are automatically saved to an `imagemitten/` folder at the root of your workspace.
+Generated images are automatically saved to a `MittenIMG/` folder at the root of your workspace.
 
 ## Configuration
 
@@ -73,14 +73,14 @@ flowchart LR
     D --> E[Enhanced prompt]
     B -- no --> E
     E --> F[Request image from Pollinations]
-    F --> G[Save to workspace<br/>imagemitten/]
+    F --> G[Save to workspace<br/>MittenIMG/]
     F --> H[Preview in sidebar]
 ```
 
 1. **Context gathering** — if enabled, MittenIMG walks your workspace (excluding `node_modules`, `.git`, `dist`, `out`, plus any folders/patterns you add via `imagemitten.contextIgnoreFolders`) and builds a text blob of file contents, capped at a reasonable size.
 2. **Prompt enhancement** — that context, along with your prompt, is sent to a text model via the Pollinations API, which returns a richer, more specific image-generation prompt.
 3. **Image generation** — the enhanced prompt is sent to Pollinations' image endpoint, with support for custom dimensions and, when editing, a base image.
-4. **Delivery** — the resulting image is streamed back into the sidebar and saved into an `imagemitten/` folder in your workspace.
+4. **Delivery** — the resulting image is streamed back into the sidebar and saved into a `MittenIMG/` folder in your workspace.
 
 All requests and responses are logged to the **MittenIMG** output channel for transparency and troubleshooting.
 

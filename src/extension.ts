@@ -274,7 +274,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
       // Save image to workspace
       if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
         const workspaceUri = vscode.workspace.workspaceFolders[0].uri;
-        const imageGenFolderUri = vscode.Uri.joinPath(workspaceUri, 'imagemitten');
+        const imageGenFolderUri = vscode.Uri.joinPath(workspaceUri, 'MittenIMG');
         await vscode.workspace.fs.createDirectory(imageGenFolderUri);
         const fileName = `image_${Date.now()}.png`;
         const fileUri = vscode.Uri.joinPath(imageGenFolderUri, fileName);
@@ -318,7 +318,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 
       if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
         const workspaceUri = vscode.workspace.workspaceFolders[0].uri;
-        const imageGenFolderUri = vscode.Uri.joinPath(workspaceUri, 'imagemitten');
+        const imageGenFolderUri = vscode.Uri.joinPath(workspaceUri, 'MittenIMG');
         await vscode.workspace.fs.createDirectory(imageGenFolderUri);
         defaultUri = vscode.Uri.joinPath(imageGenFolderUri, fileName);
       } else {
