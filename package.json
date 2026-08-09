@@ -3,6 +3,7 @@
   "displayName": "ImageMitten",
   "description": "Generates images based on codebase context using Pollinations API and LLM prompt enhancement.",
   "version": "0.0.1",
+  "icon": "media/logo.png",
   "engines": {
     "vscode": "^1.74.0"
   },
