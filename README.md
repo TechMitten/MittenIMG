@@ -16,6 +16,7 @@ MittenIMG reads your codebase for context, enhances your prompt with an LLM, and
 
 ## Features
 
+- 🔌 **Guided Pollinations connection** — a welcome screen walks first-time users through linking their Pollinations account (or skipping it) instead of hunting for API key settings.
 - 🖼️ **In-editor image generation** — describe what you want in a sidebar panel and get an image back, no browser tab required.
 - 🧠 **Codebase-aware prompts** — optionally scans your open workspace and feeds it to an LLM so the generated prompt reflects your project's actual context (framework, theme, naming, etc.), not just your raw text.
 - ✏️ **Image editing / iteration** — take a generated image and use it as the base for a follow-up edit, so you can refine results turn by turn.
@@ -50,11 +51,11 @@ Generated images are automatically saved to a `MittenIMG/` folder at the root of
 
 ### Connecting your Pollinations account (recommended)
 
-Click **🔌 Connect** in the sidebar. MittenIMG opens `enter.pollinations.ai/device` in your browser with a short code pre-filled — approve access there and the sidebar shows **✅ Connected** once it's done. Your connection is stored securely in VS Code's built-in secret storage (not in `settings.json`), expires automatically after a period set by Pollinations (7 days by default), and can be revoked anytime from your [Pollinations dashboard](https://enter.pollinations.ai) or by clicking **Disconnect** in the sidebar.
+On first launch (or anytime via the **Manage** link on the main screen), MittenIMG shows a welcome screen with a **🔌 Connect Pollinations Account** button. Clicking it opens `enter.pollinations.ai/device` in your browser with a short code pre-filled — approve access there and the screen shows **✅ Connected** before automatically returning you to the generator. Your connection is stored securely in VS Code's built-in secret storage (not in `settings.json`), expires automatically after a period set by Pollinations (7 days by default), and can be revoked anytime from your [Pollinations dashboard](https://enter.pollinations.ai) or by clicking **Disconnect** on the welcome/manage screen.
 
 ### Manual API key (fallback)
 
-If you'd rather not connect an account, or already have a Pollinations API key, you can configure it directly under **Settings → Extensions → MittenIMG**, or by editing `settings.json`. It's only used when no account is connected via **Connect**.
+From the welcome screen, click **Use a manual API key instead** (or **Skip for now** if you don't want prompt enhancement or image editing at all) to go straight to the generator. A manual key can then be configured directly under **Settings → Extensions → MittenIMG**, or by editing `settings.json`. It's only used when no account is connected.
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
@@ -96,7 +97,7 @@ All requests and responses are logged to the **MittenIMG** output channel for tr
 ## Requirements
 
 - VS Code `^1.74.0` or later
-- A [Pollinations](https://pollinations.ai) account, connected via the sidebar's **🔌 Connect** button, or a manual API key (optional, but required for prompt enhancement and image editing)
+- A [Pollinations](https://pollinations.ai) account, connected via the sidebar's welcome screen, or a manual API key (optional, but required for prompt enhancement and image editing)
 
 ## Privacy note
 
