@@ -8,8 +8,8 @@ const outputChannel = vscode.window.createOutputChannel('MittenIMG');
 // This is a pk_ key, safe to ship in the extension bundle — replace with your own to enable
 // "Connect Pollinations Account" and (if earningsEnabled was set on the key) developer earnings.
 const POLLINATIONS_APP_CLIENT_ID: string = 'pk_FVW0aHD89fKjqZwT';
-const POLLINATIONS_OAUTH_TOKEN_SECRET_KEY = 'imagemitten.pollinationsOAuthToken';
-const ONBOARDING_DISMISSED_KEY = 'imagemitten.onboardingDismissed';
+const POLLINATIONS_OAUTH_TOKEN_SECRET_KEY = 'mittenimg.pollinationsOAuthToken';
+const ONBOARDING_DISMISSED_KEY = 'mittenimg.onboardingDismissed';
 
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(outputChannel);
@@ -59,10 +59,10 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
           outputChannel.show();
           break;
         case 'openSettings':
-          vscode.commands.executeCommand('workbench.action.openSettings', 'imagemitten');
+          vscode.commands.executeCommand('workbench.action.openSettings', 'mittenimg');
           break;
         case 'toggleContext':
-          vscode.workspace.getConfiguration('imagemitten').update('useCodebaseContext', message.value, vscode.ConfigurationTarget.Global);
+          vscode.workspace.getConfiguration('mittenimg').update('useCodebaseContext', message.value, vscode.ConfigurationTarget.Global);
           break;
         case 'saveConvertedImage':
           await this.handleSaveConvertedImage(message.dataUrl, message.format);
@@ -80,8 +80,8 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     });
 
     const configListener = vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('imagemitten.useCodebaseContext')) {
-        const config = vscode.workspace.getConfiguration('imagemitten');
+      if (e.affectsConfiguration('mittenimg.useCodebaseContext')) {
+        const config = vscode.workspace.getConfiguration('mittenimg');
         const useCodebaseContext = config.get<boolean>('useCodebaseContext', true);
         this._view?.webview.postMessage({ command: 'updateContextToggle', value: useCodebaseContext });
       }
@@ -94,7 +94,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 
   private async _updateHtml() {
     if (!this._view) return;
-    const config = vscode.workspace.getConfiguration('imagemitten');
+    const config = vscode.workspace.getConfiguration('mittenimg');
     const useCodebaseContext = config.get<boolean>('useCodebaseContext', true);
     const connected = !!(await this._secrets.get(POLLINATIONS_OAUTH_TOKEN_SECRET_KEY));
     const onboardingDismissed = this._globalState.get<boolean>(ONBOARDING_DISMISSED_KEY, false);
@@ -104,7 +104,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 
   private _buildContextExcludePattern(): string {
     const defaultExcludes = ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/out/**'];
-    const config = vscode.workspace.getConfiguration('imagemitten');
+    const config = vscode.workspace.getConfiguration('mittenimg');
     const userFolders = config.get<string[]>('contextIgnoreFolders', []);
 
     const userExcludes = userFolders
@@ -127,7 +127,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     if (oauthToken) {
       return { key: oauthToken, source: 'oauth' };
     }
-    const manualKey = vscode.workspace.getConfiguration('imagemitten').get<string>('pollinationsApiKey');
+    const manualKey = vscode.workspace.getConfiguration('mittenimg').get<string>('pollinationsApiKey');
     return { key: manualKey || undefined, source: manualKey ? 'manual' : 'none' };
   }
 
@@ -234,7 +234,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
       POLLINATIONS_IMAGE_NOLOGO: 'true'
     };
 
-    const config = vscode.workspace.getConfiguration('imagemitten');
+    const config = vscode.workspace.getConfiguration('mittenimg');
     const { key: apiKey, source: apiKeySource } = await this.getActiveApiKey();
     const useCodebaseContext = config.get<boolean>('useCodebaseContext', true);
 
@@ -629,11 +629,30 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
             } else {
                 customSizeContainer.style.display = 'none';
             }
+            saveState();
         });
+
+        document.getElementById('promptInput').addEventListener('input', saveState);
+        widthInput.addEventListener('input', saveState);
+        heightInput.addEventListener('input', saveState);
 
         let currentBaseImageUrl = '';
         let lastSourceUrl = '';
         let lastBase64Url = '';
+        let lastEnhancedPrompt = '';
+
+        function saveState() {
+            vscode.setState({
+                prompt: document.getElementById('promptInput').value,
+                sizePreset: sizePreset.value,
+                width: widthInput.value,
+                height: heightInput.value,
+                baseImageUrl: currentBaseImageUrl,
+                lastSourceUrl: lastSourceUrl,
+                lastBase64Url: lastBase64Url,
+                lastEnhancedPrompt: lastEnhancedPrompt
+            });
+        }
 
         const generateBtn = document.getElementById('generateBtn');
         const statusDiv = document.getElementById('status');
@@ -672,6 +691,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         document.getElementById('clearBaseImageBtn').addEventListener('click', () => {
             currentBaseImageUrl = '';
             document.getElementById('baseImageContainer').style.display = 'none';
+            saveState();
         });
 
         function resetUI() {
@@ -687,11 +707,14 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 
             lastSourceUrl = '';
             lastBase64Url = '';
+            lastEnhancedPrompt = '';
 
             setGenerating(false, '');
             statusDiv.classList.remove('generating');
             statusDiv.textContent = '';
             document.getElementById('result').innerHTML = '';
+
+            saveState();
         }
 
         document.getElementById('createNewBtn').addEventListener('click', () => {
@@ -780,6 +803,113 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 
         updateConnectionUi();
 
+        function renderResult(imageUrl, enhancedPrompt, sourceUrl) {
+            document.getElementById('result').innerHTML = \`
+                <details style="display: none;">
+                    <summary style="cursor: pointer; font-weight: bold; margin-bottom: 5px;">Prompt Used:</summary>
+                    <div class="prompt-box">\${enhancedPrompt}</div>
+                </details>
+                <img src="\${imageUrl}" alt="Generated Image" onerror="this.alt='Failed to load image. Check logs for details.'; this.style.border='1px dashed red';" style="margin-top: 10px;" />
+                <button class="btn" id="editImageBtn" style="margin-top: 10px;">Edit This Image</button>
+                <details style="margin-top: 10px;">
+                    <summary style="cursor: pointer; font-weight: bold;">🔄 Convert to another format</summary>
+                    <div class="convert-row">
+                        <div>
+                            <label for="convertFormat">Format</label>
+                            <select id="convertFormat">
+                                <option value="png">PNG</option>
+                                <option value="jpeg">JPEG</option>
+                                <option value="webp">WebP</option>
+                            </select>
+                        </div>
+                        <div id="qualityContainer">
+                            <label for="convertQuality">Quality (<span id="qualityValue">92</span>%)</label>
+                            <input type="range" id="convertQuality" min="1" max="100" value="92" style="margin-bottom: 0;" />
+                        </div>
+                    </div>
+                    <button class="btn" id="convertSaveBtn" style="margin-top: 8px;">Convert &amp; Save</button>
+                </details>
+            \`;
+            lastSourceUrl = sourceUrl;
+            lastBase64Url = imageUrl;
+            lastEnhancedPrompt = enhancedPrompt;
+            saveState();
+
+            document.getElementById('editImageBtn').addEventListener('click', () => {
+                currentBaseImageUrl = lastBase64Url;
+                document.getElementById('baseImagePreview').src = lastBase64Url;
+                document.getElementById('baseImageContainer').style.display = 'flex';
+                document.getElementById('promptInput').value = '';
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                saveState();
+            });
+
+            const convertFormat = document.getElementById('convertFormat');
+            const qualityContainer = document.getElementById('qualityContainer');
+            const convertQuality = document.getElementById('convertQuality');
+            const qualityValue = document.getElementById('qualityValue');
+
+            convertFormat.addEventListener('change', () => {
+                qualityContainer.style.display = convertFormat.value === 'png' ? 'none' : 'block';
+            });
+
+            convertQuality.addEventListener('input', () => {
+                qualityValue.textContent = convertQuality.value;
+            });
+
+            document.getElementById('convertSaveBtn').addEventListener('click', () => {
+                if (!lastBase64Url) { return; }
+
+                const format = convertFormat.value;
+                const mime = 'image/' + format;
+                const quality = Number(convertQuality.value) / 100;
+
+                const img = new Image();
+                img.onload = () => {
+                    try {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = img.naturalWidth;
+                        canvas.height = img.naturalHeight;
+                        const ctx = canvas.getContext('2d');
+
+                        if (format === 'jpeg') {
+                            ctx.fillStyle = '#FFFFFF';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        }
+                        ctx.drawImage(img, 0, 0);
+
+                        const dataUrl = canvas.toDataURL(mime, quality);
+                        vscode.postMessage({ command: 'saveConvertedImage', dataUrl, format });
+                    } catch (convErr) {
+                        document.getElementById('status').innerText = 'Conversion failed: ' + convErr.message;
+                    }
+                };
+                img.onerror = () => {
+                    document.getElementById('status').innerText = 'Failed to load image for conversion.';
+                };
+                img.src = lastBase64Url;
+            });
+        }
+
+        const savedState = vscode.getState();
+        if (savedState) {
+            document.getElementById('promptInput').value = savedState.prompt || '';
+            if (savedState.sizePreset) {
+                sizePreset.value = savedState.sizePreset;
+                customSizeContainer.style.display = savedState.sizePreset === 'custom' ? 'flex' : 'none';
+            }
+            if (savedState.width) { widthInput.value = savedState.width; }
+            if (savedState.height) { heightInput.value = savedState.height; }
+            if (savedState.baseImageUrl) {
+                currentBaseImageUrl = savedState.baseImageUrl;
+                document.getElementById('baseImagePreview').src = savedState.baseImageUrl;
+                document.getElementById('baseImageContainer').style.display = 'flex';
+            }
+            if (savedState.lastBase64Url) {
+                renderResult(savedState.lastBase64Url, savedState.lastEnhancedPrompt || '', savedState.lastSourceUrl || '');
+            }
+        }
+
         window.addEventListener('message', event => {
             const message = event.data;
             if (message.command === 'status') {
@@ -798,87 +928,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
                 }
             } else if (message.command === 'result') {
                 setGenerating(false, 'Done!');
-                document.getElementById('result').innerHTML = \`
-                    <details style="display: none;">
-                        <summary style="cursor: pointer; font-weight: bold; margin-bottom: 5px;">Prompt Used:</summary>
-                        <div class="prompt-box">\${message.enhancedPrompt}</div>
-                    </details>
-                    <img src="\${message.imageUrl}" alt="Generated Image" onerror="this.alt='Failed to load image. Check logs for details.'; this.style.border='1px dashed red';" style="margin-top: 10px;" />
-                    <button class="btn" id="editImageBtn" style="margin-top: 10px;">Edit This Image</button>
-                    <details style="margin-top: 10px;">
-                        <summary style="cursor: pointer; font-weight: bold;">🔄 Convert to another format</summary>
-                        <div class="convert-row">
-                            <div>
-                                <label for="convertFormat">Format</label>
-                                <select id="convertFormat">
-                                    <option value="png">PNG</option>
-                                    <option value="jpeg">JPEG</option>
-                                    <option value="webp">WebP</option>
-                                </select>
-                            </div>
-                            <div id="qualityContainer">
-                                <label for="convertQuality">Quality (<span id="qualityValue">92</span>%)</label>
-                                <input type="range" id="convertQuality" min="1" max="100" value="92" style="margin-bottom: 0;" />
-                            </div>
-                        </div>
-                        <button class="btn" id="convertSaveBtn" style="margin-top: 8px;">Convert &amp; Save</button>
-                    </details>
-                \`;
-                lastSourceUrl = message.sourceUrl;
-                lastBase64Url = message.imageUrl;
-                document.getElementById('editImageBtn').addEventListener('click', () => {
-                    currentBaseImageUrl = lastBase64Url;
-                    document.getElementById('baseImagePreview').src = lastBase64Url;
-                    document.getElementById('baseImageContainer').style.display = 'flex';
-                    document.getElementById('promptInput').value = '';
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                });
-
-                const convertFormat = document.getElementById('convertFormat');
-                const qualityContainer = document.getElementById('qualityContainer');
-                const convertQuality = document.getElementById('convertQuality');
-                const qualityValue = document.getElementById('qualityValue');
-
-                convertFormat.addEventListener('change', () => {
-                    qualityContainer.style.display = convertFormat.value === 'png' ? 'none' : 'block';
-                });
-
-                convertQuality.addEventListener('input', () => {
-                    qualityValue.textContent = convertQuality.value;
-                });
-
-                document.getElementById('convertSaveBtn').addEventListener('click', () => {
-                    if (!lastBase64Url) { return; }
-
-                    const format = convertFormat.value;
-                    const mime = 'image/' + format;
-                    const quality = Number(convertQuality.value) / 100;
-
-                    const img = new Image();
-                    img.onload = () => {
-                        try {
-                            const canvas = document.createElement('canvas');
-                            canvas.width = img.naturalWidth;
-                            canvas.height = img.naturalHeight;
-                            const ctx = canvas.getContext('2d');
-
-                            if (format === 'jpeg') {
-                                ctx.fillStyle = '#FFFFFF';
-                                ctx.fillRect(0, 0, canvas.width, canvas.height);
-                            }
-                            ctx.drawImage(img, 0, 0);
-
-                            const dataUrl = canvas.toDataURL(mime, quality);
-                            vscode.postMessage({ command: 'saveConvertedImage', dataUrl, format });
-                        } catch (convErr) {
-                            document.getElementById('status').innerText = 'Conversion failed: ' + convErr.message;
-                        }
-                    };
-                    img.onerror = () => {
-                        document.getElementById('status').innerText = 'Failed to load image for conversion.';
-                    };
-                    img.src = lastBase64Url;
-                });
+                renderResult(message.imageUrl, message.enhancedPrompt, message.sourceUrl);
             } else if (message.command === 'updateContextToggle') {
                 contextEnabled = message.value;
                 document.getElementById('contextToggleBtn').classList.toggle('active', contextEnabled);

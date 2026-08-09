@@ -22,17 +22,17 @@
     "configuration": {
       "title": "MittenIMG",
       "properties": {
-        "imagemitten.useCodebaseContext": {
+        "mittenimg.useCodebaseContext": {
           "type": "boolean",
           "default": true,
           "description": "Whether to use codebase context and LLM to enhance the prompt before generating the image. If disabled, prompt is sent directly as typed."
         },
-        "imagemitten.pollinationsApiKey": {
+        "mittenimg.pollinationsApiKey": {
           "type": "string",
           "default": "",
           "description": "Manual Pollinations API key for LLM Prompt Enhancement and Image Generation. Optional — prefer using the \"Connect\" button in the sidebar to link your Pollinations account instead. This setting is only used as a fallback when no account is connected."
         },
-        "imagemitten.contextIgnoreFolders": {
+        "mittenimg.contextIgnoreFolders": {
           "type": "array",
           "items": {
             "type": "string"
