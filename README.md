@@ -30,14 +30,17 @@ Install **MittenIMG** from the Extensions view in VS Code (`Ctrl+Shift+X` / `Cmd
 
 ## Usage
 
-1. Open the **MittenIMG** icon in the Activity Bar.
-2. Type a description of the image you want in the prompt box.
-3. Pick a size preset (or choose **Custom...** to set your own width/height).
-4. Click **Generate**.
-5. Once the image appears:
+1. Open the **MittenIMG** icon in the Activity Bar. On first use you'll land on a welcome screen.
+2. Click **🔌 Connect Pollinations Account** and approve access in the browser tab that opens — this links your Pollinations account so generations run without you needing to manage an API key. If you'd rather not connect an account, click **Use a manual API key instead** (opens Settings) or **Skip for now** to go straight to the generator.
+3. Type a description of the image you want in the prompt box.
+4. Pick a size preset (or choose **Custom...** to set your own width/height).
+5. Click **Generate**.
+6. Once the image appears:
    - Click **Edit This Image** to use it as the base for a follow-up generation.
    - Expand **🔄 Convert to another format** to save it as PNG, JPEG, or WebP.
    - Expand **Prompt Used** to see exactly what prompt was sent to the image model.
+
+A small status line above the prompt box shows your connection state with a **Manage** link — click it anytime to reopen the welcome screen and connect, disconnect, or reconnect your Pollinations account.
 
 Use the toolbar buttons to **📄 Logs** (open the output channel), open **⚙️ Settings**, or toggle **🌐 Context** (codebase-aware prompting) on/off.
 
@@ -45,12 +48,18 @@ Generated images are automatically saved to a `MittenIMG/` folder at the root of
 
 ## Configuration
 
-Configure MittenIMG under **Settings → Extensions → MittenIMG**, or by editing `settings.json`:
+### Connecting your Pollinations account (recommended)
+
+Click **🔌 Connect** in the sidebar. MittenIMG opens `enter.pollinations.ai/device` in your browser with a short code pre-filled — approve access there and the sidebar shows **✅ Connected** once it's done. Your connection is stored securely in VS Code's built-in secret storage (not in `settings.json`), expires automatically after a period set by Pollinations (7 days by default), and can be revoked anytime from your [Pollinations dashboard](https://enter.pollinations.ai) or by clicking **Disconnect** in the sidebar.
+
+### Manual API key (fallback)
+
+If you'd rather not connect an account, or already have a Pollinations API key, you can configure it directly under **Settings → Extensions → MittenIMG**, or by editing `settings.json`. It's only used when no account is connected via **Connect**.
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `imagemitten.useCodebaseContext` | `boolean` | `true` | When enabled, scans your workspace files and uses an LLM to enrich your prompt with project context before generating an image. When disabled, your prompt is sent as-is. |
-| `imagemitten.pollinationsApiKey` | `string` | `""` | Your Pollinations API key, used for LLM prompt enhancement, image editing, and authenticated image generation. |
+| `imagemitten.pollinationsApiKey` | `string` | `""` | Manual Pollinations API key, used as a fallback for LLM prompt enhancement, image editing, and authenticated image generation when no account is connected. |
 | `imagemitten.contextIgnoreFolders` | `string[]` | `[]` | Additional folder names or glob patterns to exclude from codebase context scanning (e.g. `"test"`, `"build"`, `"**/fixtures/**"`). `node_modules`, `.git`, `dist`, and `out` are always excluded. |
 
 ```json
@@ -61,7 +70,7 @@ Configure MittenIMG under **Settings → Extensions → MittenIMG**, or by editi
 }
 ```
 
-> **Note:** Without an API key, MittenIMG skips prompt enhancement and image editing but will still attempt basic image generation.
+> **Note:** Without a connected account or a manual API key, MittenIMG skips prompt enhancement and image editing but will still attempt basic image generation.
 
 ## How it works
 
@@ -87,7 +96,7 @@ All requests and responses are logged to the **MittenIMG** output channel for tr
 ## Requirements
 
 - VS Code `^1.74.0` or later
-- A [Pollinations](https://pollinations.ai) API key (optional, but required for prompt enhancement and image editing)
+- A [Pollinations](https://pollinations.ai) account, connected via the sidebar's **🔌 Connect** button, or a manual API key (optional, but required for prompt enhancement and image editing)
 
 ## Privacy note
 

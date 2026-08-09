@@ -1,13 +1,20 @@
 import * as vscode from 'vscode';
-import axios, { AxiosRequestConfig } from 'axios';
+import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
 import { Buffer } from 'buffer';
 
 const outputChannel = vscode.window.createOutputChannel('MittenIMG');
 
+// Publishable BYOP App Key (client_id) from https://enter.pollinations.ai/keys.
+// This is a pk_ key, safe to ship in the extension bundle — replace with your own to enable
+// "Connect Pollinations Account" and (if earningsEnabled was set on the key) developer earnings.
+const POLLINATIONS_APP_CLIENT_ID: string = 'pk_FVW0aHD89fKjqZwT';
+const POLLINATIONS_OAUTH_TOKEN_SECRET_KEY = 'imagemitten.pollinationsOAuthToken';
+const ONBOARDING_DISMISSED_KEY = 'imagemitten.onboardingDismissed';
+
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(outputChannel);
 
-  const provider = new ImageMittenViewProvider(context.extensionUri);
+  const provider = new ImageMittenViewProvider(context.extensionUri, context.secrets, context.globalState);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('imagemitten-sidebar.view', provider)
   );
@@ -21,8 +28,13 @@ export function activate(context: vscode.ExtensionContext) {
 
 class ImageMittenViewProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
+  private _devicePollTimer?: ReturnType<typeof setInterval>;
 
-  constructor(private readonly _extensionUri: vscode.Uri) {}
+  constructor(
+    private readonly _extensionUri: vscode.Uri,
+    private readonly _secrets: vscode.SecretStorage,
+    private readonly _globalState: vscode.Memento
+  ) {}
 
   public resolveWebviewView(
     webviewView: vscode.WebviewView,
@@ -55,6 +67,15 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         case 'saveConvertedImage':
           await this.handleSaveConvertedImage(message.dataUrl, message.format);
           break;
+        case 'connectPollinations':
+          await this.handleConnectPollinations();
+          break;
+        case 'disconnectPollinations':
+          await this.handleDisconnectPollinations();
+          break;
+        case 'dismissOnboarding':
+          await this._globalState.update(ONBOARDING_DISMISSED_KEY, true);
+          break;
       }
     });
 
@@ -71,11 +92,14 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private _updateHtml() {
+  private async _updateHtml() {
     if (!this._view) return;
     const config = vscode.workspace.getConfiguration('imagemitten');
     const useCodebaseContext = config.get<boolean>('useCodebaseContext', true);
-    this._view.webview.html = this._getMainHtml(useCodebaseContext);
+    const connected = !!(await this._secrets.get(POLLINATIONS_OAUTH_TOKEN_SECRET_KEY));
+    const onboardingDismissed = this._globalState.get<boolean>(ONBOARDING_DISMISSED_KEY, false);
+    const showOnboarding = !connected && !onboardingDismissed;
+    this._view.webview.html = this._getMainHtml(useCodebaseContext, connected, showOnboarding);
   }
 
   private _buildContextExcludePattern(): string {
@@ -90,6 +114,108 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 
     const allExcludes = Array.from(new Set([...defaultExcludes, ...userExcludes]));
     return `{${allExcludes.join(',')}}`;
+  }
+
+  private async _postConnectionStatus() {
+    const token = await this._secrets.get(POLLINATIONS_OAUTH_TOKEN_SECRET_KEY);
+    this._view?.webview.postMessage({ command: 'connectionStatus', connected: !!token });
+  }
+
+  /** Prefers a BYOP OAuth token over the manually-configured settings key. */
+  private async getActiveApiKey(): Promise<{ key: string | undefined; source: 'oauth' | 'manual' | 'none' }> {
+    const oauthToken = await this._secrets.get(POLLINATIONS_OAUTH_TOKEN_SECRET_KEY);
+    if (oauthToken) {
+      return { key: oauthToken, source: 'oauth' };
+    }
+    const manualKey = vscode.workspace.getConfiguration('imagemitten').get<string>('pollinationsApiKey');
+    return { key: manualKey || undefined, source: manualKey ? 'manual' : 'none' };
+  }
+
+  private async handleConnectPollinations() {
+    if (!this._view) return;
+
+    if (!POLLINATIONS_APP_CLIENT_ID || POLLINATIONS_APP_CLIENT_ID === 'pk_REPLACE_WITH_YOUR_APP_KEY') {
+      vscode.window.showErrorMessage('MittenIMG is not configured with a Pollinations App Key. Falling back to manual API key entry in Settings.');
+      return;
+    }
+
+    try {
+      outputChannel.appendLine('[BYOP] Requesting device code...');
+      const { data: deviceData } = await axios.post('https://enter.pollinations.ai/api/device/code', {
+        client_id: POLLINATIONS_APP_CLIENT_ID
+      });
+
+      const { device_code, user_code, verification_uri } = deviceData;
+      const verificationUrl = verification_uri.startsWith('http')
+        ? verification_uri
+        : `https://enter.pollinations.ai${verification_uri}`;
+
+      this._view.webview.postMessage({ command: 'connectPending', userCode: user_code, verificationUrl });
+      outputChannel.appendLine(`[BYOP] Opening ${verificationUrl} for user code ${user_code}`);
+      await vscode.env.openExternal(vscode.Uri.parse(verificationUrl));
+
+      const pollIntervalMs = 5000;
+      const maxAttempts = 120; // ~10 minutes
+      let attempts = 0;
+
+      await new Promise<void>((resolve) => {
+        this._devicePollTimer = setInterval(async () => {
+          attempts++;
+          try {
+            const { data: tokenData } = await axios.post('https://enter.pollinations.ai/api/device/token', {
+              device_code
+            });
+
+            if (tokenData?.access_token) {
+              clearInterval(this._devicePollTimer);
+              this._devicePollTimer = undefined;
+              await this._secrets.store(POLLINATIONS_OAUTH_TOKEN_SECRET_KEY, tokenData.access_token);
+              outputChannel.appendLine('[BYOP] Connected successfully.');
+              this._view?.webview.postMessage({ command: 'status', text: 'Connected to Pollinations.' });
+              await this._postConnectionStatus();
+              resolve();
+            }
+          } catch (pollError: unknown) {
+            const status = axios.isAxiosError(pollError) ? pollError.response?.status : undefined;
+            const errCode = axios.isAxiosError(pollError) ? pollError.response?.data?.error : undefined;
+
+            if (errCode === 'authorization_pending') {
+              return; // keep polling
+            }
+
+            clearInterval(this._devicePollTimer);
+            this._devicePollTimer = undefined;
+            outputChannel.appendLine(`[BYOP] Device token polling failed (status ${status}): ${errCode || pollError}`);
+            this._view?.webview.postMessage({ command: 'status', text: 'Failed to connect to Pollinations. Please try again.', isError: true });
+            resolve();
+          }
+
+          if (attempts >= maxAttempts && this._devicePollTimer) {
+            clearInterval(this._devicePollTimer);
+            this._devicePollTimer = undefined;
+            outputChannel.appendLine('[BYOP] Device code expired before user approved.');
+            this._view?.webview.postMessage({ command: 'status', text: 'Connection request timed out. Please try again.', isError: true });
+            resolve();
+          }
+        }, pollIntervalMs);
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      outputChannel.appendLine(`[BYOP Error] ${message}`);
+      vscode.window.showErrorMessage(`Failed to start Pollinations connection: ${message}`);
+      this._view.webview.postMessage({ command: 'status', text: `Failed to start Pollinations connection: ${message}`, isError: true });
+    }
+  }
+
+  private async handleDisconnectPollinations() {
+    if (this._devicePollTimer) {
+      clearInterval(this._devicePollTimer);
+      this._devicePollTimer = undefined;
+    }
+    await this._secrets.delete(POLLINATIONS_OAUTH_TOKEN_SECRET_KEY);
+    outputChannel.appendLine('[BYOP] Disconnected.');
+    await this._postConnectionStatus();
+    this._view?.webview.postMessage({ command: 'status', text: 'Disconnected from Pollinations.' });
   }
 
   private async handleGenerate(userPrompt: string, width?: string, height?: string, baseImageUrl?: string) {
@@ -109,8 +235,16 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     };
 
     const config = vscode.workspace.getConfiguration('imagemitten');
-    const apiKey = config.get<string>('pollinationsApiKey');
+    const { key: apiKey, source: apiKeySource } = await this.getActiveApiKey();
     const useCodebaseContext = config.get<boolean>('useCodebaseContext', true);
+
+    const handleAuthFailure = async (status: number | undefined) => {
+      if (status === 401 && apiKeySource === 'oauth') {
+        await this._secrets.delete(POLLINATIONS_OAUTH_TOKEN_SECRET_KEY);
+        await this._postConnectionStatus();
+        outputChannel.appendLine('[BYOP] Stored token was rejected (401). Cleared connection; please reconnect.');
+      }
+    };
 
     try {
       let enhancedPrompt = userPrompt;
@@ -186,7 +320,10 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
             : message;
           outputChannel.appendLine(`[Text LLM Warning] Status ${status}: ${errDetails}`);
 
-          if (status === 401) {
+          if (status === 401 && apiKeySource === 'oauth') {
+            await handleAuthFailure(status);
+            vscode.window.showWarningMessage('Your Pollinations connection expired or was revoked. Please reconnect from the sidebar. Using original prompt directly for image generation.');
+          } else if (status === 401) {
             vscode.window.showWarningMessage('Text model returned 401 Unauthorized (Pollinations API key required for LLM prompt analysis). Using original prompt directly for image generation.');
           } else {
             vscode.window.showWarningMessage(`Prompt enhancement failed (${message}). Using original prompt directly.`);
@@ -212,7 +349,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         outputChannel.appendLine('[Image Edit] Base image is base64. Uploading to media.pollinations.ai...');
         this._view.webview.postMessage({ command: 'status', text: 'Uploading base image...' });
         if (!apiKey) {
-           throw new Error("An API key is required to upload images for editing.");
+           throw new Error("Connect your Pollinations account (or set a manual API key) to edit images.");
         }
         try {
           const uploadRes = await axios.post('https://media.pollinations.ai/upload', {
@@ -235,6 +372,8 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
           }
           outputChannel.appendLine(`[Image Edit] Uploaded base image successfully: ${uploadedImageUrl}`);
         } catch (uploadErr: unknown) {
+          const status = axios.isAxiosError(uploadErr) ? uploadErr.response?.status : undefined;
+          await handleAuthFailure(status);
           const message = uploadErr instanceof Error ? uploadErr.message : String(uploadErr);
           throw new Error(`Failed to upload base image: ${message}`, { cause: uploadErr });
         }
@@ -266,7 +405,14 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
       if (apiKey) {
         axiosConfig.headers = { Authorization: `Bearer ${apiKey}` };
       }
-      const response = await axios.get(imageUrl, axiosConfig);
+      let response: AxiosResponse;
+      try {
+        response = await axios.get(imageUrl, axiosConfig);
+      } catch (imageErr: unknown) {
+        const status = axios.isAxiosError(imageErr) ? imageErr.response?.status : undefined;
+        await handleAuthFailure(status);
+        throw imageErr;
+      }
       const imageBuffer = Buffer.from(response.data);
       const base64Image = `data:image/png;base64,${imageBuffer.toString('base64')}`;
 
@@ -349,7 +495,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private _getMainHtml(useCodebaseContext: boolean) {
+  private _getMainHtml(useCodebaseContext: boolean, connected: boolean, showOnboarding: boolean) {
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -378,12 +524,52 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         .convert-row > div { flex: 1; }
         .convert-row label { display: block; font-size: 0.8em; margin-bottom: 2px; }
         #qualityContainer { display: none; }
+
+        #onboardingScreen { display: ${showOnboarding ? 'block' : 'none'}; text-align: center; padding: 20px 4px; }
+        #onboardingScreen .onboarding-icon { font-size: 40px; margin-bottom: 8px; }
+        #onboardingScreen h2 { margin: 0 0 6px; }
+        #onboardingScreen p.onboarding-desc { font-size: 0.9em; opacity: 0.85; margin: 0 0 18px; line-height: 1.4; }
+        #onboardingStatusLine { font-size: 0.85em; margin-bottom: 12px; min-height: 1.2em; }
+        #deviceCodeBox { display: none; margin: 14px 0; padding: 10px; background-color: var(--vscode-textBlockQuote-background); border-left: 4px solid var(--vscode-textBlockQuote-border); font-size: 0.85em; text-align: left; }
+        #deviceCodeBox code { font-size: 1.15em; font-weight: bold; letter-spacing: 0.05em; }
+        .onboarding-footer { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; align-items: center; font-size: 0.8em; }
+        .onboarding-footer a { color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: none; }
+        .onboarding-footer a:hover { text-decoration: underline; }
+
+        #mainScreen { display: ${showOnboarding ? 'none' : 'block'}; }
+        #accountStatusLine { font-size: 0.75em; opacity: 0.8; margin-bottom: 10px; }
+        #accountStatusLine a { color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: none; }
+        #accountStatusLine a:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
+    <div id="onboardingScreen">
+        <div class="onboarding-icon">🎨</div>
+        <h2>Welcome to MittenIMG</h2>
+        <p class="onboarding-desc">Connect your Pollinations account to generate images right from this sidebar — no API key to copy or manage.</p>
+
+        <div id="onboardingStatusLine">${connected ? '✅ Connected to Pollinations' : ''}</div>
+
+        <button class="btn" id="onboardingConnectBtn" style="${connected ? 'display: none;' : ''}">🔌 Connect Pollinations Account</button>
+        <button class="btn-secondary" id="onboardingDisconnectBtn" style="${connected ? '' : 'display: none;'} width: 100%;">Disconnect</button>
+
+        <div id="deviceCodeBox">
+            Go to <a href="#" id="verificationLink" target="_blank" rel="noopener">enter.pollinations.ai/device</a> and enter code: <code id="userCodeText"></code>
+        </div>
+
+        <div class="onboarding-footer">
+            <a id="useManualKeyLink">Use a manual API key instead</a>
+            <a id="onboardingContinueLink">${connected ? '← Back to app' : 'Skip for now'}</a>
+        </div>
+    </div>
+
+    <div id="mainScreen">
     <h3>Generate Images</h3>
+
+    <div id="accountStatusLine"><span id="accountStatusText">${connected ? '✅ Connected to Pollinations' : 'Not connected to Pollinations'}</span> · <a id="manageAccountLink">Manage</a></div>
+
     <p style="font-size: 0.9em;">Describe your image below:</p>
-    
+
     <textarea id="promptInput" placeholder="E.g., Generate a hero illustration for this project..."></textarea>
     
     <div style="display: flex; gap: 8px; margin-bottom: 10px;">
@@ -427,6 +613,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 
     <div id="status"></div>
     <div id="result"></div>
+    </div>
 
     <script>
         const vscode = acquireVsCodeApi();
@@ -527,11 +714,82 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
             vscode.postMessage({ command: 'toggleContext', value: contextEnabled });
         });
 
+        let pollinationsConnected = ${connected};
+        let connecting = false;
+
+        const onboardingScreen = document.getElementById('onboardingScreen');
+        const mainScreen = document.getElementById('mainScreen');
+        const onboardingConnectBtn = document.getElementById('onboardingConnectBtn');
+        const onboardingDisconnectBtn = document.getElementById('onboardingDisconnectBtn');
+        const onboardingStatusLine = document.getElementById('onboardingStatusLine');
+        const onboardingContinueLink = document.getElementById('onboardingContinueLink');
+        const useManualKeyLink = document.getElementById('useManualKeyLink');
+        const deviceCodeBox = document.getElementById('deviceCodeBox');
+        const accountStatusText = document.getElementById('accountStatusText');
+        const manageAccountLink = document.getElementById('manageAccountLink');
+
+        function showOnboardingScreen() {
+            onboardingScreen.style.display = 'block';
+            mainScreen.style.display = 'none';
+        }
+
+        function showMainScreen() {
+            onboardingScreen.style.display = 'none';
+            mainScreen.style.display = 'block';
+        }
+
+        function updateConnectionUi() {
+            onboardingStatusLine.textContent = connecting
+                ? 'Waiting for approval in your browser…'
+                : (pollinationsConnected ? '✅ Connected to Pollinations' : '');
+            onboardingConnectBtn.style.display = pollinationsConnected ? 'none' : 'block';
+            onboardingConnectBtn.disabled = connecting;
+            onboardingConnectBtn.textContent = connecting ? 'Waiting for approval…' : '🔌 Connect Pollinations Account';
+            onboardingDisconnectBtn.style.display = pollinationsConnected ? 'block' : 'none';
+            onboardingContinueLink.textContent = pollinationsConnected ? '← Back to app' : 'Skip for now';
+            if (pollinationsConnected) {
+                deviceCodeBox.style.display = 'none';
+            }
+            accountStatusText.textContent = pollinationsConnected ? '✅ Connected to Pollinations' : 'Not connected to Pollinations';
+        }
+
+        onboardingConnectBtn.addEventListener('click', () => {
+            connecting = true;
+            updateConnectionUi();
+            vscode.postMessage({ command: 'connectPollinations' });
+        });
+
+        onboardingDisconnectBtn.addEventListener('click', () => {
+            vscode.postMessage({ command: 'disconnectPollinations' });
+        });
+
+        useManualKeyLink.addEventListener('click', () => {
+            vscode.postMessage({ command: 'dismissOnboarding' });
+            vscode.postMessage({ command: 'openSettings' });
+            showMainScreen();
+        });
+
+        onboardingContinueLink.addEventListener('click', () => {
+            if (!pollinationsConnected) {
+                vscode.postMessage({ command: 'dismissOnboarding' });
+            }
+            showMainScreen();
+        });
+
+        manageAccountLink.addEventListener('click', showOnboardingScreen);
+
+        updateConnectionUi();
+
         window.addEventListener('message', event => {
             const message = event.data;
             if (message.command === 'status') {
                 if (message.isError) {
                     setGenerating(false, message.text);
+                    if (connecting) {
+                        connecting = false;
+                        updateConnectionUi();
+                        onboardingStatusLine.textContent = message.text;
+                    }
                 } else if (isGenerating) {
                     setGenerating(true, message.text);
                 } else {
@@ -624,6 +882,18 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
             } else if (message.command === 'updateContextToggle') {
                 contextEnabled = message.value;
                 document.getElementById('contextToggleBtn').classList.toggle('active', contextEnabled);
+            } else if (message.command === 'connectPending') {
+                document.getElementById('userCodeText').textContent = message.userCode;
+                document.getElementById('verificationLink').href = message.verificationUrl;
+                deviceCodeBox.style.display = 'block';
+            } else if (message.command === 'connectionStatus') {
+                const wasConnecting = connecting;
+                connecting = false;
+                pollinationsConnected = message.connected;
+                updateConnectionUi();
+                if (pollinationsConnected && wasConnecting) {
+                    setTimeout(showMainScreen, 900);
+                }
             }
         });
     </script>
