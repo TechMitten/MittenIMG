@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import axios from 'axios';
+import { Buffer } from 'buffer';
 
 const outputChannel = vscode.window.createOutputChannel('Image Generator');
 
@@ -40,24 +41,41 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage(async (message) => {
       switch (message.command) {
         case 'generate':
-          await this.handleGenerate(message.text);
+          await this.handleGenerate(message.text, message.width, message.height, message.baseImageUrl);
           break;
         case 'showOutput':
           outputChannel.show();
           break;
         case 'openSettings':
-          vscode.commands.executeCommand('workbench.action.openSettings', 'image-generator.pollinationsApiKey');
+          vscode.commands.executeCommand('workbench.action.openSettings', 'image-generator');
+          break;
+        case 'toggleContext':
+          vscode.workspace.getConfiguration('image-generator').update('useCodebaseContext', message.value, vscode.ConfigurationTarget.Global);
           break;
       }
+    });
+
+    const configListener = vscode.workspace.onDidChangeConfiguration(e => {
+      if (e.affectsConfiguration('image-generator.useCodebaseContext')) {
+        const config = vscode.workspace.getConfiguration('image-generator');
+        const useCodebaseContext = config.get<boolean>('useCodebaseContext', true);
+        this._view?.webview.postMessage({ command: 'updateContextToggle', value: useCodebaseContext });
+      }
+    });
+    
+    webviewView.onDidDispose(() => {
+      configListener.dispose();
     });
   }
 
   private _updateHtml() {
     if (!this._view) return;
-    this._view.webview.html = this._getMainHtml();
+    const config = vscode.workspace.getConfiguration('image-generator');
+    const useCodebaseContext = config.get<boolean>('useCodebaseContext', true);
+    this._view.webview.html = this._getMainHtml(useCodebaseContext);
   }
 
-  private async handleGenerate(userPrompt: string) {
+  private async handleGenerate(userPrompt: string, width?: string, height?: string, baseImageUrl?: string) {
     if (!this._view) return;
 
     outputChannel.appendLine('========================================');
@@ -67,17 +85,21 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
       POLLINATIONS_TEXT_MODEL: 'openai',
       POLLINATIONS_TEXT_ENDPOINT: 'https://gen.pollinations.ai/v1/chat/completions',
       POLLINATIONS_IMAGE_ENDPOINT: 'https://gen.pollinations.ai/image/',
-      POLLINATIONS_IMAGE_MODEL: 'flux',
-      POLLINATIONS_IMAGE_WIDTH: '512',
-      POLLINATIONS_IMAGE_HEIGHT: '512',
+      POLLINATIONS_IMAGE_MODEL: 'zimage',
+      POLLINATIONS_IMAGE_WIDTH: width || '512',
+      POLLINATIONS_IMAGE_HEIGHT: height || '512',
       POLLINATIONS_IMAGE_NOLOGO: 'true'
     };
 
     const config = vscode.workspace.getConfiguration('image-generator');
     const apiKey = config.get<string>('pollinationsApiKey');
+    const useCodebaseContext = config.get<boolean>('useCodebaseContext', true);
 
     try {
-      let codebaseContext = "No workspace found.";
+      let enhancedPrompt = userPrompt;
+
+      if (useCodebaseContext && !baseImageUrl) {
+        let codebaseContext = "No workspace found.";
       if (vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0) {
         this._view.webview.postMessage({ command: 'status', text: 'Reading workspace files...' });
         outputChannel.appendLine('[Context] Reading workspace files...');
@@ -109,7 +131,6 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
 
       outputChannel.appendLine(`[Text LLM] Sending prompt enhancement request to ${llmEndpoint}...`);
 
-      let enhancedPrompt = userPrompt;
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
 
       if (apiKey) {
@@ -152,17 +173,63 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
       } else {
         outputChannel.appendLine('[Auth] No API key configured. Skipping prompt enhancement step.');
       }
+      } else {
+        if (baseImageUrl) {
+          outputChannel.appendLine('[Context] Image edit mode. Skipping codebase context and using exact prompt.');
+        } else {
+          outputChannel.appendLine('[Context] Codebase context is disabled. Using original prompt directly.');
+        }
+      }
       
-      this._view.webview.postMessage({ command: 'status', text: 'Generating Image...' });
+      let uploadedImageUrl = baseImageUrl;
+
+      if (baseImageUrl && baseImageUrl.startsWith('data:')) {
+        outputChannel.appendLine('[Image Edit] Base image is base64. Uploading to media.pollinations.ai...');
+        if (!apiKey) {
+           throw new Error("An API key is required to upload images for editing.");
+        }
+        try {
+          const uploadRes = await axios.post('https://media.pollinations.ai/upload', {
+            data: baseImageUrl,
+            contentType: 'image/png',
+            name: 'base_image.png'
+          }, {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${apiKey}`
+            }
+          });
+          
+          if (typeof uploadRes.data === 'string' && uploadRes.data.startsWith('http')) {
+            uploadedImageUrl = uploadRes.data;
+          } else if (uploadRes.data && uploadRes.data.url) {
+            uploadedImageUrl = uploadRes.data.url;
+          } else {
+            uploadedImageUrl = uploadRes.data; // fallback
+          }
+          outputChannel.appendLine(`[Image Edit] Uploaded base image successfully: ${uploadedImageUrl}`);
+        } catch (uploadErr: any) {
+          throw new Error(`Failed to upload base image: ${uploadErr.message}`);
+        }
+      }
 
       const encodedPrompt = encodeURIComponent(enhancedPrompt);
-      const imgModel = encodeURIComponent(configVars['POLLINATIONS_IMAGE_MODEL']);
+      let imgModel = encodeURIComponent(configVars['POLLINATIONS_IMAGE_MODEL']);
+      
+      if (uploadedImageUrl) {
+        imgModel = encodeURIComponent('gpt-image-2');
+      }
+
       const imgWidth = encodeURIComponent(configVars['POLLINATIONS_IMAGE_WIDTH']);
       const imgHeight = encodeURIComponent(configVars['POLLINATIONS_IMAGE_HEIGHT']);
       const imgNologo = encodeURIComponent(configVars['POLLINATIONS_IMAGE_NOLOGO']);
       
       const imgEndpoint = configVars['POLLINATIONS_IMAGE_ENDPOINT'].replace(/\/$/, '') + '/';
-      const imageUrl = `${imgEndpoint}${encodedPrompt}?model=${imgModel}&width=${imgWidth}&height=${imgHeight}&nologo=${imgNologo}`;
+      let imageUrl = `${imgEndpoint}${encodedPrompt}?model=${imgModel}&width=${imgWidth}&height=${imgHeight}&nologo=${imgNologo}`;
+
+      if (uploadedImageUrl) {
+        imageUrl += `&image=${encodeURIComponent(uploadedImageUrl as string)}`;
+      }
 
       outputChannel.appendLine(`[Image Gen] Image URL: ${imageUrl}`);
 
@@ -188,7 +255,7 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
         outputChannel.appendLine(`[Image Gen] Saved image to ${savedPath}`);
       }
 
-      this._view.webview.postMessage({ command: 'result', imageUrl: base64Image, enhancedPrompt });
+      this._view.webview.postMessage({ command: 'result', imageUrl: base64Image, sourceUrl: imageUrl, enhancedPrompt });
       outputChannel.appendLine(`[Generation Completed] Successfully sent image to webview${savedPath ? ' and saved to workspace' : ''}.`);
 
     } catch (error: any) {
@@ -198,7 +265,7 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private _getMainHtml() {
+  private _getMainHtml(useCodebaseContext: boolean) {
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -207,12 +274,13 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
     <title>Image Generator</title>
     <style>
         body { font-family: var(--vscode-font-family); padding: 10px; color: var(--vscode-editor-foreground); background-color: var(--vscode-editor-background); }
-        textarea, select { width: 100%; background-color: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); padding: 8px; margin-bottom: 10px; box-sizing: border-box; }
+        textarea, select, input { width: 100%; background-color: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); padding: 8px; margin-bottom: 10px; box-sizing: border-box; }
         textarea { height: 80px; resize: vertical; }
         .btn { width: 100%; background-color: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; padding: 8px 16px; margin-bottom: 8px; cursor: pointer; font-size: 14px; }
         .btn:hover { background-color: var(--vscode-button-hoverBackground); }
         .btn-secondary { background-color: transparent; border: 1px solid var(--vscode-button-secondaryBackground); color: var(--vscode-foreground); font-size: 12px; padding: 4px 8px; margin-top: 6px; }
         .btn-secondary:hover { background-color: var(--vscode-button-secondaryHoverBackground); }
+        .btn-secondary.active { border-color: var(--vscode-focusBorder); }
         #status { margin-top: 10px; font-style: italic; }
         #result { margin-top: 20px; }
         #result img { max-width: 100%; border-radius: 4px; margin-top: 10px; }
@@ -225,11 +293,43 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
     <p style="font-size: 0.9em;">Uses workspace context & Pollinations AI.</p>
     
     <textarea id="promptInput" placeholder="E.g., Generate a hero illustration for this project..."></textarea>
+    
+    <div style="display: flex; gap: 8px; margin-bottom: 10px;">
+        <div style="flex: 1;">
+            <label for="sizePreset" style="font-size: 0.8em;">Size / Aspect Ratio</label>
+            <select id="sizePreset">
+                <option value="512x512">Square (512x512)</option>
+                <option value="1024x576">Landscape (1024x576)</option>
+                <option value="576x1024">Portrait (576x1024)</option>
+                <option value="1024x1024">High Res Square (1024x1024)</option>
+                <option value="custom">Custom...</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="customSizeContainer" style="display: none; gap: 8px; margin-bottom: 10px;">
+        <div style="flex: 1;">
+            <label for="widthInput" style="font-size: 0.8em;">Custom Width</label>
+            <input type="number" id="widthInput" value="512" />
+        </div>
+        <div style="flex: 1;">
+            <label for="heightInput" style="font-size: 0.8em;">Custom Height</label>
+            <input type="number" id="heightInput" value="512" />
+        </div>
+    </div>
+
+    <div id="baseImageContainer" style="display: none; align-items: center; gap: 10px; margin-bottom: 10px; padding: 10px; background-color: var(--vscode-input-background); border: 1px solid var(--vscode-input-border);">
+        <img id="baseImagePreview" src="" style="width: 50px; height: 50px; object-fit: cover; border-radius: 4px;" />
+        <span style="flex: 1; font-size: 0.8em;">Editing base image</span>
+        <button class="btn-secondary" id="clearBaseImageBtn" style="margin: 0;">❌</button>
+    </div>
+
     <button class="btn" id="generateBtn">Generate</button>
 
-    <div class="links-row">
+    <div class="links-row" style="align-items: center;">
         <button class="btn-secondary" id="logsBtn">📄 View Logs</button>
         <button class="btn-secondary" id="settingsBtn">⚙️ Settings</button>
+        <button class="btn-secondary ${useCodebaseContext ? 'active' : ''}" id="contextToggleBtn" title="Toggle Codebase Context">🌐 Context</button>
     </div>
 
     <div id="status"></div>
@@ -238,11 +338,46 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
     <script>
         const vscode = acquireVsCodeApi();
         
+        const sizePreset = document.getElementById('sizePreset');
+        const customSizeContainer = document.getElementById('customSizeContainer');
+        const widthInput = document.getElementById('widthInput');
+        const heightInput = document.getElementById('heightInput');
+
+        sizePreset.addEventListener('change', () => {
+            if (sizePreset.value === 'custom') {
+                customSizeContainer.style.display = 'flex';
+            } else {
+                customSizeContainer.style.display = 'none';
+            }
+        });
+
+        let currentBaseImageUrl = '';
+        let lastSourceUrl = '';
+        let lastBase64Url = '';
+
         document.getElementById('generateBtn').addEventListener('click', () => {
+            let finalWidth, finalHeight;
+            if (sizePreset.value === 'custom') {
+                finalWidth = widthInput.value;
+                finalHeight = heightInput.value;
+            } else {
+                const [w, h] = sizePreset.value.split('x');
+                finalWidth = w;
+                finalHeight = h;
+            }
+
             vscode.postMessage({ 
                 command: 'generate', 
-                text: document.getElementById('promptInput').value
+                text: document.getElementById('promptInput').value,
+                width: finalWidth,
+                height: finalHeight,
+                baseImageUrl: currentBaseImageUrl
             });
+        });
+
+        document.getElementById('clearBaseImageBtn').addEventListener('click', () => {
+            currentBaseImageUrl = '';
+            document.getElementById('baseImageContainer').style.display = 'none';
         });
 
         document.getElementById('logsBtn').addEventListener('click', () => {
@@ -251,6 +386,14 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
 
         document.getElementById('settingsBtn').addEventListener('click', () => {
             vscode.postMessage({ command: 'openSettings' });
+        });
+
+        let contextEnabled = ${useCodebaseContext};
+        const contextBtn = document.getElementById('contextToggleBtn');
+        contextBtn.addEventListener('click', () => {
+            contextEnabled = !contextEnabled;
+            contextBtn.classList.toggle('active', contextEnabled);
+            vscode.postMessage({ command: 'toggleContext', value: contextEnabled });
         });
 
         window.addEventListener('message', event => {
@@ -263,7 +406,19 @@ class ImageGeneratorViewProvider implements vscode.WebviewViewProvider {
                     <strong>Prompt Used:</strong>
                     <div class="prompt-box">\${message.enhancedPrompt}</div>
                     <img src="\${message.imageUrl}" alt="Generated Image" onerror="this.alt='Failed to load image. Check logs for details.'; this.style.border='1px dashed red';" />
+                    <button class="btn" id="editImageBtn" style="margin-top: 10px;">Edit This Image</button>
                 \`;
+                lastSourceUrl = message.sourceUrl;
+                lastBase64Url = message.imageUrl;
+                document.getElementById('editImageBtn').addEventListener('click', () => {
+                    currentBaseImageUrl = lastBase64Url;
+                    document.getElementById('baseImagePreview').src = lastBase64Url;
+                    document.getElementById('baseImageContainer').style.display = 'flex';
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                });
+            } else if (message.command === 'updateContextToggle') {
+                contextEnabled = message.value;
+                document.getElementById('contextToggleBtn').classList.toggle('active', contextEnabled);
             }
         });
     </script>

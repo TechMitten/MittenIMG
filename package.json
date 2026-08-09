@@ -15,6 +15,11 @@
     "configuration": {
       "title": "Image Generator",
       "properties": {
+        "image-generator.useCodebaseContext": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to use codebase context and LLM to enhance the prompt before generating the image. If disabled, prompt is sent directly as typed."
+        },
         "image-generator.pollinationsApiKey": {
           "type": "string",
           "default": "",
