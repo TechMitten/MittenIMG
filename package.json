@@ -4,6 +4,10 @@
   "description": "Generates images based on codebase context using Pollinations API and LLM prompt enhancement.",
   "version": "0.0.1",
   "icon": "media/logo.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TechMitten/image-extension.git"
+  },
   "engines": {
     "vscode": "^1.74.0"
   },

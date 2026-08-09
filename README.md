@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="media/icon.svg" width="64" height="64" alt="MittenIMG icon" />
+<img src="media/logo.png" width="64" height="64" alt="MittenIMG icon" />
 
 # MittenIMG
 
