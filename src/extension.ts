@@ -72,7 +72,11 @@ export function activate(context: vscode.ExtensionContext) {
 
   const provider = new ImageMittenViewProvider(context.extensionUri, context.secrets, context.globalState);
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider('imagemitten-sidebar.view', provider)
+    vscode.window.registerWebviewViewProvider('imagemitten-sidebar.view', provider, {
+      webviewOptions: {
+        retainContextWhenHidden: true
+      }
+    })
   );
 
   const disposable = vscode.commands.registerCommand('imagemitten.start', () => {
@@ -155,10 +159,13 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     if (!this._view) return;
     const config = vscode.workspace.getConfiguration('mittenimg');
     const useCodebaseContext = config.get<boolean>('useCodebaseContext', true);
+    const manualApiKey = (config.get<string>('pollinationsApiKey') || '').trim();
     const connected = !!(await this._secrets.get(POLLINATIONS_OAUTH_TOKEN_SECRET_KEY));
     const onboardingDismissed = this._globalState.get<boolean>(ONBOARDING_DISMISSED_KEY, false);
-    const showOnboarding = !connected && !onboardingDismissed;
-    this._view.webview.html = this._getMainHtml(useCodebaseContext, connected, showOnboarding, this._imageModels, this._editImageModels);
+    const showOnboarding = !connected && !onboardingDismissed && !manualApiKey;
+    const logoUri = this._view.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'logo.png'));
+    const logoTransparentUri = this._view.webview.asWebviewUri(vscode.Uri.joinPath(this._extensionUri, 'media', 'logo_transparent.png'));
+    this._view.webview.html = this._getMainHtml(useCodebaseContext, connected, showOnboarding, this._imageModels, this._editImageModels, logoUri, logoTransparentUri);
   }
 
   /** Fetches the live image model catalog and pushes it to the webview if it changed. */
@@ -262,6 +269,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
               clearInterval(this._devicePollTimer);
               this._devicePollTimer = undefined;
               await this._secrets.store(POLLINATIONS_OAUTH_TOKEN_SECRET_KEY, tokenData.access_token);
+              await this._globalState.update(ONBOARDING_DISMISSED_KEY, true);
               outputChannel.appendLine('[BYOP] Connected successfully.');
               this._view?.webview.postMessage({ command: 'status', text: 'Connected to Pollinations.' });
               await this._postConnectionStatus();
@@ -312,6 +320,8 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 
   private async handleGenerate(userPrompt: string, width?: string, height?: string, baseImageUrl?: string, imageModel?: string) {
     if (!this._view) return;
+
+    await this._globalState.update(ONBOARDING_DISMISSED_KEY, true);
 
     outputChannel.appendLine('========================================');
     outputChannel.appendLine(`[Generation Started] Prompt: "${userPrompt}"`);
@@ -589,7 +599,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private _getMainHtml(useCodebaseContext: boolean, connected: boolean, showOnboarding: boolean, imageModels: ImageModelOption[], editImageModels: ImageModelOption[]) {
+  private _getMainHtml(useCodebaseContext: boolean, connected: boolean, showOnboarding: boolean, imageModels: ImageModelOption[], editImageModels: ImageModelOption[], logoUri: vscode.Uri, logoTransparentUri: vscode.Uri) {
     const renderOptions = (models: ImageModelOption[], defaultName: string) => models
       .map(m => `<option value="${escapeHtml(m.name)}"${m.name === defaultName ? ' selected' : ''}>${escapeHtml(m.title)}</option>`)
       .join('');
@@ -626,7 +636,8 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         #qualityContainer { display: none; }
 
         #onboardingScreen { display: ${showOnboarding ? 'block' : 'none'}; text-align: center; padding: 20px 4px; }
-        #onboardingScreen .onboarding-icon { font-size: 40px; margin-bottom: 8px; }
+        #onboardingScreen .onboarding-icon { margin-bottom: 10px; }
+        #onboardingScreen .onboarding-icon img { width: 72px; height: 72px; border-radius: 12px; display: block; margin: 0 auto; }
         #onboardingScreen h2 { margin: 0 0 6px; }
         #onboardingScreen p.onboarding-desc { font-size: 0.9em; opacity: 0.85; margin: 0 0 18px; line-height: 1.4; }
         #onboardingStatusLine { font-size: 0.85em; margin-bottom: 12px; min-height: 1.2em; }
@@ -640,6 +651,9 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         .onboarding-footer a:hover { text-decoration: underline; }
 
         #mainScreen { display: ${showOnboarding ? 'none' : 'block'}; }
+        .main-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+        .main-header img { width: 32px; height: 32px; border-radius: 6px; flex-shrink: 0; }
+        .main-header h3 { margin: 0; font-size: 1.15em; }
         #accountStatusLine { font-size: 0.75em; opacity: 0.8; margin-bottom: 10px; }
         #accountStatusLine a { color: var(--vscode-textLink-foreground); cursor: pointer; text-decoration: none; }
         #accountStatusLine a:hover { text-decoration: underline; }
@@ -647,7 +661,9 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
     <div id="onboardingScreen">
-        <div class="onboarding-icon">🎨</div>
+        <div class="onboarding-icon">
+            <img src="${logoTransparentUri}" alt="MittenIMG Logo" />
+        </div>
         <h2>Welcome to MittenIMG</h2>
         <p class="onboarding-desc">Connect your Pollinations account to generate images right from this sidebar — no API key to copy or manage.</p>
 
@@ -671,7 +687,10 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
     </div>
 
     <div id="mainScreen">
-    <h3>Generate Images</h3>
+    <div class="main-header">
+        <img src="${logoUri}" alt="MittenIMG Logo" />
+        <h3>Generate Images</h3>
+    </div>
 
     <div id="accountStatusLine"><span id="accountStatusText">${connected ? '✅ Connected to Pollinations' : 'Not connected to Pollinations'}</span> · <a id="manageAccountLink">Manage</a></div>
 
@@ -761,6 +780,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         modelSelect.addEventListener('change', saveState);
         editModelSelect.addEventListener('change', saveState);
 
+        let currentScreen = ${showOnboarding ? "'onboarding'" : "'main'"};
         let currentBaseImageUrl = '';
         let lastSourceUrl = '';
         let lastBase64Url = '';
@@ -768,6 +788,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 
         function saveState() {
             vscode.setState({
+                currentScreen: currentScreen,
                 prompt: document.getElementById('promptInput').value,
                 sizePreset: sizePreset.value,
                 width: widthInput.value,
@@ -884,13 +905,17 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         const manageAccountLink = document.getElementById('manageAccountLink');
 
         function showOnboardingScreen() {
+            currentScreen = 'onboarding';
             onboardingScreen.style.display = 'block';
             mainScreen.style.display = 'none';
+            saveState();
         }
 
         function showMainScreen() {
+            currentScreen = 'main';
             onboardingScreen.style.display = 'none';
             mainScreen.style.display = 'block';
+            saveState();
         }
 
         function updateConnectionUi() {
@@ -925,9 +950,7 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
         });
 
         onboardingContinueLink.addEventListener('click', () => {
-            if (!pollinationsConnected) {
-                vscode.postMessage({ command: 'dismissOnboarding' });
-            }
+            vscode.postMessage({ command: 'dismissOnboarding' });
             showMainScreen();
         });
 
@@ -1045,6 +1068,14 @@ class ImageMittenViewProvider implements vscode.WebviewViewProvider {
 
         const savedState = vscode.getState();
         if (savedState) {
+            if (savedState.currentScreen === 'main') {
+                showMainScreen();
+            } else if (savedState.currentScreen === 'onboarding') {
+                showOnboardingScreen();
+            } else if (savedState.prompt || savedState.lastBase64Url || savedState.lastSourceUrl) {
+                showMainScreen();
+            }
+
             document.getElementById('promptInput').value = savedState.prompt || '';
             if (savedState.sizePreset) {
                 sizePreset.value = savedState.sizePreset;
