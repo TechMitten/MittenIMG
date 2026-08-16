@@ -13,4 +13,4 @@ CLAUDE.md
 pollinationsapi.md
 **/*.map
 **/.gitignore
-media/icon.svg
+webpack.strip-sourcemap-loader.js

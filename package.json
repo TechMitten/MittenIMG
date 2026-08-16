@@ -2,7 +2,7 @@
   "name": "imagemitten",
   "displayName": "MittenIMG",
   "description": "Generates images based on codebase context using Pollinations API and LLM prompt enhancement.",
-  "version": "0.0.4",
+  "version": "0.0.6",
   "publisher": "TechRayApps",
   "license": "MIT",
   "icon": "media/logo.png",
